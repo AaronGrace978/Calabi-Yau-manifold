@@ -237,14 +237,66 @@ export async function runAutonomousBuildLoop({
 }
 
 /**
+ * Detects short conversational filler / acknowledgement replies (e.g., "okay", "ok", "yes", "thanks")
+ * so they are never mistaken for an application specification.
+ */
+export function isConversationalFillerPrompt(prompt = '') {
+  const cleaned = String(prompt || '')
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9\s]/g, '')
+    .replace(/\s+/g, ' ');
+  if (!cleaned) return true;
+  const fillerSet = new Set([
+    'ok',
+    'okay',
+    'k',
+    'kk',
+    'yes',
+    'yeah',
+    'yep',
+    'yup',
+    'sure',
+    'cool',
+    'nice',
+    'great',
+    'awesome',
+    'thanks',
+    'thank you',
+    'thx',
+    'got it',
+    'go',
+    'do it',
+    'run',
+    'run it',
+    'build',
+    'build it',
+    'test',
+    'hi',
+    'hello',
+    'hey',
+    'yo',
+    'wtf',
+    'what',
+    'why',
+    'how',
+    'huh',
+    'hmm',
+  ]);
+  return fillerSet.has(cleaned);
+}
+
+/**
  * Determines whether a user prompt is asking to build/create/scaffold an application, tool,
- * desktop app, API, or laboratory.
+ * website, landing page, 3D scene, desktop app, API, or laboratory.
  */
 export function isApplicationBuildPrompt(prompt = '') {
   const text = String(prompt || '').trim().toLowerCase();
-  if (!text) return false;
-  return /\b(build|create|make|scaffold|generate|develop|code|write)\b/.test(text) ||
-    /\b(electron|tauri|desktop app|web app|dashboard|api|tracker|studio|synth|simulator|visualizer|game|kanban|tool)\b/.test(
+  if (!text || isConversationalFillerPrompt(text)) return false;
+  return (
+    /\b(build|create|make|scaffold|generate|develop|code|write|design)\b/.test(text) ||
+    /\b(landing\s*page|website|webpage|homepage|portfolio|saas|webgl|three\.?js|3d|electron|tauri|desktop app|web app|dashboard|api|tracker|studio|synth|simulator|visualizer|game|kanban|tool)\b/.test(
       text
-    );
+    )
+  );
 }

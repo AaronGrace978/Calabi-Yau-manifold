@@ -37,6 +37,14 @@ export const PROJECT_TEMPLATES = [
     defaultVerifyCommand: 'node test.mjs',
     defaultRunCommand: 'npx vite',
     keywords: [
+      'landing',
+      'landing page',
+      'website',
+      'webpage',
+      'homepage',
+      'marketing',
+      'portfolio',
+      'saas',
       'react',
       'vite',
       'dashboard',
@@ -162,6 +170,16 @@ export function selectTemplateForPrompt(prompt = '', explicitTemplateId = 'auto'
   if (/\btauri\b|\bcargo\b|\brust desktop\b/.test(lower)) {
     return PROJECT_TEMPLATES.find((t) => t.id === 'tauri-rust-app');
   }
+  if (
+    /\blanding\s*page\b|\blanding\b|\bwebsite\b|\bweb\s*page\b|\bhomepage\b|\bmarketing\s*page\b|\bportfolio\b|\bsaas\b|\bwaitlist\b/.test(
+      lower
+    )
+  ) {
+    return PROJECT_TEMPLATES.find((t) => t.id === 'react-vite-app');
+  }
+  if (/\bshader\b|\bglsl\b|\braymarch\b|\bthree\.?js\b|\bwebgl\b|\b3d\b/.test(lower)) {
+    return PROJECT_TEMPLATES.find((t) => t.id === 'webgl-shader-app');
+  }
   if (/\bpython\b|\bpytest\b|\bcli tool\b/.test(lower)) {
     return PROJECT_TEMPLATES.find((t) => t.id === 'python-science-cli');
   }
@@ -174,9 +192,6 @@ export function selectTemplateForPrompt(prompt = '', explicitTemplateId = 'auto'
   }
   if (/\brest api\b|\bbackend\b|\bhttp server\b|\bexpress\b|\bfull-?stack\b|\bmicroservice\b/.test(lower)) {
     return PROJECT_TEMPLATES.find((t) => t.id === 'fullstack-node-api');
-  }
-  if (/\bshader\b|\bglsl\b|\braymarch\b|\bthree\.?js\b|\bwebgl\b/.test(lower)) {
-    return PROJECT_TEMPLATES.find((t) => t.id === 'webgl-shader-app');
   }
   if (
     /\bfrontier\b|\bwitness\b|\bpersistent homology\b|\bberry phase\b|\bfisher-rao\b|\binterpretability\b|\bhallucination\b|\bmerkle proof\b/.test(

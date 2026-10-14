@@ -13,6 +13,13 @@
  */
 
 import { PROJECT_TEMPLATES, selectTemplateForPrompt } from './templates.js';
+import {
+  bundlePreviewHtml,
+  buildLandingPageAppHtml,
+  buildWebgl3DSceneAppHtml,
+  buildAudioSynthAppHtml,
+  buildKanbanBoardAppHtml,
+} from './appTemplatesHtml.js';
 
 const STOP_WORDS = new Set([
   'build',
@@ -21,7 +28,18 @@ const STOP_WORDS = new Set([
   'write',
   'generate',
   'develop',
+  'scaffold',
+  'design',
+  'code',
   'please',
+  'pls',
+  'plz',
+  'buddy',
+  'pal',
+  'friend',
+  'mate',
+  'bro',
+  'dude',
   'application',
   'app',
   'project',
@@ -29,20 +47,148 @@ const STOP_WORDS = new Set([
   'with',
   'that',
   'this',
+  'these',
+  'those',
   'from',
   'into',
+  'onto',
   'using',
   'for',
   'and',
   'the',
   'can',
+  'could',
+  'would',
+  'should',
+  'will',
   'you',
+  'your',
+  'me',
+  'my',
+  'mine',
+  'we',
+  'us',
+  'our',
+  'i',
+  'im',
+  'a',
+  'an',
+  'to',
+  'of',
+  'in',
+  'on',
+  'at',
+  'by',
+  'as',
+  'is',
+  'are',
+  'was',
+  'were',
+  'be',
+  'been',
+  'do',
+  'does',
+  'did',
+  'have',
+  'has',
+  'had',
+  'let',
+  'lets',
   'want',
   'need',
+  'like',
+  'just',
+  'some',
+  'any',
+  'new',
+  'good',
+  'nice',
+  'cool',
+  'awesome',
+  'great',
+  'simple',
+  'quick',
   'actual',
   'full',
   'working',
+  'okay',
+  'ok',
+  'yes',
+  'yeah',
+  'yep',
+  'sure',
+  'hey',
+  'hi',
+  'hello',
+  'thanks',
+  'thank',
+  'about',
+  'or',
+  'but',
+  'if',
+  'so',
+  'up',
+  'out',
+  'it',
+  'its',
 ]);
+
+const UPPERCASE_WORDS = new Set([
+  '3d',
+  '2d',
+  '4d',
+  '5d',
+  '6d',
+  '7d',
+  '8d',
+  '10d',
+  '11d',
+  'ai',
+  'ui',
+  'ux',
+  'api',
+  'css',
+  'html',
+  'js',
+  'glsl',
+  'gpu',
+  'cpu',
+  'dsp',
+  'crm',
+  'erp',
+  'cli',
+  'sdk',
+  'ipc',
+  'sql',
+  'jwt',
+  'llm',
+  'fps',
+  'vr',
+  'xr',
+]);
+
+const SPECIAL_CASE_WORDS = {
+  webgl: 'WebGL',
+  threejs: 'Three.js',
+  'three.js': 'Three.js',
+  saas: 'SaaS',
+  defi: 'DeFi',
+  oauth: 'OAuth',
+  graphql: 'GraphQL',
+  nodejs: 'Node.js',
+  fastapi: 'FastAPI',
+  pytorch: 'PyTorch',
+  calabi: 'Calabi',
+  yau: 'Yau',
+  'calabi-yau': 'Calabi-Yau',
+};
+
+function formatTitleWord(word = '') {
+  const low = String(word || '').toLowerCase();
+  if (SPECIAL_CASE_WORDS[low]) return SPECIAL_CASE_WORDS[low];
+  if (UPPERCASE_WORDS.has(low)) return low.toUpperCase();
+  return low.charAt(0).toUpperCase() + low.slice(1);
+}
 
 /**
  * Deterministic 32-bit FNV-1a hash used to derive unique visual palettes, seeds, and fingerprints
@@ -85,7 +231,7 @@ export function analyzeBuildIntent(prompt = '', explicitTemplateId = 'auto', pre
   }
 
   // Construct human-readable title tailored to the prompt
-  const titleWords = domainKeywords.slice(0, 5).map((w) => w.charAt(0).toUpperCase() + w.slice(1));
+  const titleWords = domainKeywords.slice(0, 5).map((w) => formatTitleWord(w));
   const title = titleWords.join(' ');
 
   // Construct unique slug and disambiguate if already in previousSlugs
@@ -141,8 +287,51 @@ export function analyzeBuildIntent(prompt = '', explicitTemplateId = 'auto', pre
 function deriveDomainSpecification(rawPrompt, keywords, { primaryNoun, secondaryNoun, tertiaryNoun, seed }) {
   const lower = rawPrompt.toLowerCase();
 
+  if (
+    /\blanding\s*page\b|\blanding\b|\bwebsite\b|\bweb\s*page\b|\bhomepage\b|\bmarketing\b|\bportfolio\b|\bsaas\b|\bwaitlist\b|\blaunch\s*page\b/.test(
+      lower
+    )
+  ) {
+    return {
+      archetype: 'landing-page',
+      category: 'Responsive Web & Marketing Experience',
+      entityLabel: 'Feature Section',
+      actionLabel: 'Launch Interactive Preview',
+      metrics: [
+        { key: 'conversion', label: 'Conversion Lift', value: Number((14.8 + (seed % 40) / 10).toFixed(1)), unit: '%' },
+        { key: 'lighthouse', label: 'Lighthouse Score', value: 99, unit: '/100' },
+        { key: 'ttfb', label: 'First Contentful Paint', value: Number((0.42 + (seed % 20) / 100).toFixed(2)), unit: 's' },
+      ],
+      defaultItems: [
+        { id: 'lp-1', name: 'Hero Banner & Waitlist CTA', status: 'LIVE', metric: 'Above the Fold', priority: 'HIGH' },
+        { id: 'lp-2', name: 'Interactive Feature Bento Grid', status: 'LIVE', metric: '6 Cards', priority: 'HIGH' },
+        { id: 'lp-3', name: 'Monthly / Annual Pricing Toggle', status: 'LIVE', metric: '3 Tiers', priority: 'MEDIUM' },
+      ],
+    };
+  }
+
+  if (/\b3d\b|\bwebgl\b|\bthree\.?js\b|\bshader\b|\bglsl\b|\braymarch\b|\bnugget\b|\bmesh\b/.test(lower)) {
+    return {
+      archetype: 'webgl-3d',
+      category: '3D WebGL Geometry & Shader Studio',
+      entityLabel: '3D Scene Node',
+      actionLabel: 'Rebuild 3D Mesh',
+      metrics: [
+        { key: 'fps', label: 'Frame Rate', value: 60, unit: 'FPS' },
+        { key: 'quads', label: 'Active Mesh Quads', value: 1568, unit: 'quads' },
+        { key: 'drawCalls', label: 'GPU Pass Time', value: Number((1.2 + (seed % 15) / 10).toFixed(1)), unit: 'ms' },
+      ],
+      defaultItems: [
+        { id: '3d-1', name: `${primaryNoun} Procedural 3D Mesh`, status: 'RENDERING', metric: 'PBR + Rim Light', priority: 'HIGH' },
+        { id: '3d-2', name: 'Interactive 360° Orbit Camera', status: 'ACTIVE', metric: 'Drag + Zoom', priority: 'HIGH' },
+        { id: '3d-3', name: 'Surface Bump & Glaze Shader', status: 'ONLINE', metric: '4 Octaves FBM', priority: 'MEDIUM' },
+      ],
+    };
+  }
+
   if (/audio|synth|music|oscillator|sequencer|daw|beat|sound|frequency/.test(lower)) {
     return {
+      archetype: 'audio-synth',
       category: 'Audio & DSP Synthesis',
       entityLabel: 'Oscillator Voice',
       actionLabel: 'Trigger Synth Sequence',
@@ -161,6 +350,7 @@ function deriveDomainSpecification(rawPrompt, keywords, { primaryNoun, secondary
 
   if (/crypto|finance|trading|portfolio|stock|market|ledger|budget|defi/.test(lower)) {
     return {
+      archetype: 'finance',
       category: 'Quantitative Finance & Risk Analytics',
       entityLabel: 'Strategy Position',
       actionLabel: 'Execute Rebalance Simulation',
@@ -179,6 +369,7 @@ function deriveDomainSpecification(rawPrompt, keywords, { primaryNoun, secondary
 
   if (/kanban|task|todo|project|agile|sprint|roadmap|issue|bug|crm|notes/.test(lower)) {
     return {
+      archetype: 'kanban',
       category: 'Productivity & Workflow Orchestration',
       entityLabel: 'Workflow Item',
       actionLabel: 'Advance Pipeline Stage',
@@ -197,6 +388,7 @@ function deriveDomainSpecification(rawPrompt, keywords, { primaryNoun, secondary
 
   if (/4d|5d|6d|7d|8d|11d|dimension|tesseract|hopf|klein|manifold|e8|kaluza|topology/.test(lower)) {
     return {
+      archetype: 'dimensional-lab',
       category: 'Higher-Dimensional Differential Geometry & Topology',
       entityLabel: 'Manifold Cross-Section',
       actionLabel: 'Sweep 4D Hyperplane w₄',
@@ -214,18 +406,19 @@ function deriveDomainSpecification(rawPrompt, keywords, { primaryNoun, secondary
   }
 
   return {
-    category: `${primaryNoun} ${secondaryNoun} Engineering System`,
-    entityLabel: `${primaryNoun} Module`,
-    actionLabel: `Execute ${primaryNoun} Cycle`,
+    archetype: 'general-app',
+    category: `${primaryNoun} ${secondaryNoun} Application`,
+    entityLabel: `${primaryNoun} Item`,
+    actionLabel: `Run ${primaryNoun} Action`,
     metrics: [
       { key: 'throughput', label: `${primaryNoun} Throughput`, value: 120 + (seed % 280), unit: 'ops/s' },
-      { key: 'fidelity', label: `${secondaryNoun} Fidelity`, value: Number((96.2 + (seed % 35) / 10).toFixed(1)), unit: '%' },
-      { key: 'latency', label: 'Pipeline Latency', value: Number((2.1 + (seed % 25) / 10).toFixed(1)), unit: 'ms' },
+      { key: 'fidelity', label: `${secondaryNoun} Score`, value: Number((96.2 + (seed % 35) / 10).toFixed(1)), unit: '%' },
+      { key: 'latency', label: 'Response Time', value: Number((2.1 + (seed % 25) / 10).toFixed(1)), unit: 'ms' },
     ],
     defaultItems: [
-      { id: 'm-1', name: `${primaryNoun} Primary Controller`, status: 'ONLINE', metric: `${90 + (seed % 9)}% load`, priority: 'HIGH' },
-      { id: 'm-2', name: `${secondaryNoun} Telemetry Stream`, status: 'ACTIVE', metric: `${12 + (seed % 20)} channels`, priority: 'MEDIUM' },
-      { id: 'm-3', name: `${tertiaryNoun} Verification Harness`, status: 'VERIFIED', metric: 'Guardrails Active', priority: 'HIGH' },
+      { id: 'm-1', name: `${primaryNoun} Core Service`, status: 'ONLINE', metric: `${90 + (seed % 9)}% ready`, priority: 'HIGH' },
+      { id: 'm-2', name: `${secondaryNoun} Event Stream`, status: 'ACTIVE', metric: `${12 + (seed % 20)} channels`, priority: 'MEDIUM' },
+      { id: 'm-3', name: `${tertiaryNoun} Verification Check`, status: 'VERIFIED', metric: 'Passed', priority: 'HIGH' },
     ],
   };
 }
@@ -236,24 +429,30 @@ function deriveDomainSpecification(rawPrompt, keywords, { primaryNoun, secondary
  */
 export function buildMultiFileSystemPrompt(intent) {
   return [
-    `You are the Calabi-Yau Autonomous Multi-File Application Architect.`,
+    `You are an elite Full-Stack, WebGL & UI/UX Application Architect.`,
     `The user requested: "${intent.prompt}".`,
     `Target Application Template: ${intent.template.label} (${intent.templateId}).`,
     `Project Slug: ${intent.slug} (saved to ~/CalabiYauProjects/builds/${intent.slug}/).`,
     ``,
     `CRITICAL RULES:`,
-    `1. Build the EXACT application requested by the user ("${intent.prompt}"). Never emit a generic or previously built Fermat quintic demo unless explicitly asked.`,
+    `1. Build the EXACT application requested by the user ("${intent.prompt}").`,
+    `   - If the user asked for a landing page or website, build a complete, modern responsive landing page with navbar, hero section, features grid, interactive pricing/demo, and footer.`,
+    `   - If the user asked for a 3D or WebGL scene/object (e.g. a 3D chicken nugget, spaceship, shader, etc.), build an actual interactive 3D WebGL / Canvas / Three.js scene that renders that exact 3D object with lighting and orbit controls.`,
+    `   - NEVER emit fake "Engineering System / 4D Hyperplane" boilerplate unless the user explicitly asked for 4D math.`,
     `2. Output a complete, runnable multi-file project using exact file markers in the format:`,
     `   // === FILE: <relative/path> ===`,
     `   followed by the complete file contents.`,
-    `3. Always include an interactive HTML entry point (${intent.template.entryFile}) that works standalone in a live preview window AND integrates with the rest of the project files.`,
+    `3. Always include a complete, self-contained HTML entry point (${intent.template.entryFile}) that renders the full interactive UI immediately in a browser preview.`,
   ].join('\n');
 }
 
 /**
- * Parses LLM output for `// === FILE: path ===` blocks or fenced code blocks with filenames.
+ * Parses LLM output for:
+ *   1. Explicit `// === FILE: path ===` markers,
+ *   2. Fenced code blocks with filenames (` ```html:index.html `, ` ```js app.js `, or preceded by `### index.html`),
+ *   3. Standard unnamed markdown code blocks (` ```html `, ` ```css `, ` ```js `, ` ```glsl `, ` ```python `).
  */
-export function parseMultiFileResponse(rawText = '') {
+export function parseMultiFileResponse(rawText = '', defaultEntryFile = 'index.html') {
   const text = String(rawText || '');
   const files = [];
 
@@ -263,10 +462,9 @@ export function parseMultiFileResponse(rawText = '') {
   while ((match = markerRegex.exec(text)) !== null) {
     const filePath = match[1].trim().replace(/^['"`]|['"`]$/g, '');
     let content = match[2].trim();
-    // Strip wrapping triple-backtick fences if the LLM wrapped the file body in a fence
     content = content.replace(/^```[a-zA-Z0-9_-]*\r?\n([\s\S]*?)\r?\n```$/, '$1').trim();
     if (filePath && content) {
-      files.push({ path: filePath, content });
+      files.push({ path: filePath, content, fromLlm: true });
     }
   }
 
@@ -275,12 +473,93 @@ export function parseMultiFileResponse(rawText = '') {
   }
 
   // Pattern 2: Fenced blocks with filename annotations ```js:main.js or ```html index.html
-  const fenceRegex = /```([a-zA-Z0-9_-]+)?(?::|\s+)([a-zA-Z0-9_./-]+\.[a-zA-Z0-9]+)\r?\n([\s\S]*?)```/g;
-  while ((match = fenceRegex.exec(text)) !== null) {
+  const fenceWithFileRegex = /```([a-zA-Z0-9_-]+)?(?::|\s+)([a-zA-Z0-9_./-]+\.[a-zA-Z0-9]+)\r?\n([\s\S]*?)```/g;
+  while ((match = fenceWithFileRegex.exec(text)) !== null) {
     const filePath = match[2].trim();
     const content = match[3].trim();
     if (filePath && content) {
-      files.push({ path: filePath, content });
+      files.push({ path: filePath, content, fromLlm: true });
+    }
+  }
+
+  if (files.length > 0) {
+    return files;
+  }
+
+  // Pattern 3: Standard markdown fenced code blocks ```html, ```css, ```javascript / ```js, ```glsl, ```python
+  const standardFenceRegex = /(?:(?:^|\n)(?:#+\s*|\*\*)?([a-zA-Z0-9_./-]+\.(?:html|css|m?js|cjs|ts|tsx|py|rs|glsl|frag|vert|json))(?:\*\*|`|:)?\s*\r?\n)?```([a-zA-Z0-9_-]*)\r?\n([\s\S]*?)```/g;
+  const cssChunks = [];
+  const jsChunks = [];
+  let htmlContent = '';
+
+  while ((match = standardFenceRegex.exec(text)) !== null) {
+    const headingFilename = (match[1] || '').trim();
+    const lang = (match[2] || '').trim().toLowerCase();
+    const body = (match[3] || '').trim();
+    if (!body || body.length < 12) continue;
+
+    // Check if the first line inside the fence is a filename comment like `<!-- index.html -->` or `// app.js`
+    const firstLineMatch = body.match(/^(?:\/\/|#|<!--|\/\*)\s*(?:file(?:name)?:\s*)?([a-zA-Z0-9_./-]+\.[a-zA-Z0-9]+)\s*(?:-->|\*\/)?\r?\n/i);
+    const explicitPath = headingFilename || (firstLineMatch ? firstLineMatch[1].trim() : '');
+
+    if (explicitPath) {
+      files.push({ path: explicitPath, content: body, fromLlm: true });
+      continue;
+    }
+
+    if (
+      lang === 'html' ||
+      lang === 'htm' ||
+      lang === 'xml' ||
+      lang === 'svg' ||
+      (!lang && /<!doctype html>|<html[\s>]|<body[\s>]|<div[\s>]|<section[\s>]|<header[\s>]|<canvas[\s>]/i.test(body))
+    ) {
+      if (!htmlContent || body.length > htmlContent.length) {
+        htmlContent = body;
+      }
+    } else if (lang === 'css' || lang === 'scss') {
+      cssChunks.push(body);
+    } else if (lang === 'js' || lang === 'javascript' || lang === 'mjs' || lang === 'ts') {
+      jsChunks.push(body);
+    } else if (lang === 'glsl' || lang === 'frag' || lang === 'fragment' || lang === 'shader') {
+      files.push({ path: 'shader.frag', content: body, fromLlm: true });
+    } else if (lang === 'python' || lang === 'py') {
+      files.push({ path: 'app.py', content: body, fromLlm: true });
+    } else if (lang === 'rust' || lang === 'rs') {
+      files.push({ path: 'src-tauri/src/main.rs', content: body, fromLlm: true });
+    } else if (lang === 'json' && /"name"|"dependencies"|"scripts"/.test(body)) {
+      files.push({ path: 'package.json', content: body, fromLlm: true });
+    }
+  }
+
+  if (cssChunks.length > 0) {
+    files.push({ path: 'styles.css', content: cssChunks.join('\n\n'), fromLlm: true });
+  }
+  if (jsChunks.length > 0) {
+    files.push({ path: 'app.js', content: jsChunks.join('\n\n'), fromLlm: true });
+  }
+  if (htmlContent) {
+    files.unshift({ path: defaultEntryFile, content: htmlContent, fromLlm: true });
+  } else if (jsChunks.length > 0 && !files.some((f) => /\.html?$/i.test(f.path))) {
+    // If the LLM emitted standalone browser/Three.js/Canvas JS without an HTML wrapper, synthesize an HTML runner for it
+    const combinedJs = jsChunks.join('\n\n');
+    if (/document\.|window\.|canvas|THREE|WebGL|requestAnimationFrame|innerHTML|createElement/i.test(combinedJs)) {
+      const wrappedHtml = `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Live Application Preview</title>
+  <link rel="stylesheet" href="styles.css" />
+  <style>html,body{margin:0;padding:0;min-height:100vh;background:#060913;color:#f0f6ff;font-family:system-ui,sans-serif;}canvas{display:block;}</style>
+</head>
+<body>
+  <div id="app"></div>
+  <canvas id="canvas" width="900" height="560"></canvas>
+  <script type="module" src="app.js"></script>
+</body>
+</html>`;
+      files.unshift({ path: defaultEntryFile, content: wrappedHtml, fromLlm: true });
     }
   }
 
@@ -289,8 +568,8 @@ export function parseMultiFileResponse(rawText = '') {
 
 /**
  * Synthesizes a complete, prompt-specific multi-file application for the given intent.
- * If LLM files were parsed, merges/augments them so all required template files exist and
- * every file is runnable and testable.
+ * If LLM files were parsed, merges/augments them AND bundles the LLM's HTML/CSS/JS into
+ * `previewHtml` so the live preview displays the actual LLM-built application.
  */
 export function compileApplicationProject(prompt, options = {}) {
   const {
@@ -301,38 +580,50 @@ export function compileApplicationProject(prompt, options = {}) {
 
   const previousSlugs = previousBuilds.map((b) => b.slug).filter(Boolean);
   const intent = analyzeBuildIntent(prompt, templateId, previousSlugs);
+  const entryPath = intent.template.entryFile;
 
   // Generate base template files tailored to `intent`
   const templateFiles = generateTemplateFiles(intent);
 
-  // If the LLM returned multi-file blocks, overlay them on top of the scaffold
-  const parsedLlmFiles = parseMultiFileResponse(llmResponseText);
+  // Parse any multi-file or standard fenced code blocks from the LLM response
+  const parsedLlmFiles = parseMultiFileResponse(llmResponseText, entryPath);
   const fileMap = new Map();
   for (const f of templateFiles) {
-    fileMap.set(f.path, f.content);
+    fileMap.set(f.path, { path: f.path, content: f.content, fromLlm: false });
   }
   for (const f of parsedLlmFiles) {
     if (f.path && f.content && f.content.length > 5) {
-      fileMap.set(f.path, f.content);
+      fileMap.set(f.path, { path: f.path, content: f.content, fromLlm: true });
     }
   }
 
-  const files = Array.from(fileMap.entries()).map(([path, content]) => ({ path, content }));
+  const richFiles = Array.from(fileMap.values());
+  const llmEntryFile =
+    parsedLlmFiles.find((f) => f.path === entryPath) ||
+    parsedLlmFiles.find((f) => /\.html?$/i.test(f.path));
 
-  // Build interactive preview HTML that renders the live application (including Electron desktop frame,
-  // multi-file inspector, live state controls, and domain-specific interactive workbench)
-  const previewHtml = buildInteractivePreviewHtml(intent, files);
-
-  // If the entry file was not overridden by custom HTML, ensure index.html is the rich interactive app
-  const entryPath = intent.template.entryFile;
-  if (!parsedLlmFiles.some((f) => f.path === entryPath)) {
-    const idx = files.findIndex((f) => f.path === entryPath);
+  let previewHtml;
+  if (llmEntryFile && llmEntryFile.content && llmEntryFile.content.trim().length > 20) {
+    // Use the LLM's actual generated HTML and bundle any sibling CSS/JS files into it!
+    previewHtml = bundlePreviewHtml(llmEntryFile.content, richFiles, intent);
+    const idx = richFiles.findIndex((f) => f.path === entryPath);
     if (idx >= 0) {
-      files[idx].content = previewHtml;
+      richFiles[idx].content = previewHtml;
     } else {
-      files.unshift({ path: entryPath, content: previewHtml });
+      richFiles.unshift({ path: entryPath, content: previewHtml, fromLlm: true });
+    }
+  } else {
+    // Synthesize a domain-authentic interactive application matching the user's prompt
+    previewHtml = buildInteractivePreviewHtml(intent, richFiles);
+    const idx = richFiles.findIndex((f) => f.path === entryPath);
+    if (idx >= 0) {
+      richFiles[idx].content = previewHtml;
+    } else {
+      richFiles.unshift({ path: entryPath, content: previewHtml, fromLlm: false });
     }
   }
+
+  const files = richFiles.map(({ path, content }) => ({ path, content }));
 
   const novelty = verifyBuildNovelty(
     { slug: intent.slug, prompt: intent.prompt, templateId: intent.templateId, files },
@@ -1064,15 +1355,35 @@ console.log('[VERIFY PASS] WebGL Shader Studio "${intent.slug}" verified.');
   ];
 }
 
+export { bundlePreviewHtml };
+
 /**
  * Generates a self-contained, interactive application HTML document tailored specifically
  * to `intent` and its multi-file project structure.
  *
- * When `intent.templateId === 'electron-desktop'`, it renders a complete native-style
- * Electron Desktop window shell with IPC Bridge inspector, interactive entity manager,
- * live canvas visualization, and source file tabs.
+ * Dispatches to genuine, domain-authentic application builders:
+ * - Landing Page / Website / SaaS / Marketing Page -> Full multi-section responsive Landing Page
+ * - 3D WebGL / Three.js / Shader / Object Scene -> Real 3D WebGL Viewport & Procedural Mesh Studio
+ * - Audio / Synth / Music -> Playable WebAudio Polyphonic Synth & Step Sequencer
+ * - Kanban / Task / Project -> 4-Column Interactive Kanban Board
+ * - Desktop / API / Dimensional Lab -> Native-style interactive application workbench
  */
 export function buildInteractivePreviewHtml(intent, files = []) {
+  const archetype = intent?.domainSpec?.archetype || '';
+
+  if (archetype === 'landing-page') {
+    return buildLandingPageAppHtml(intent, files);
+  }
+  if (archetype === 'webgl-3d' || intent?.templateId === 'webgl-shader-app') {
+    return buildWebgl3DSceneAppHtml(intent, files);
+  }
+  if (archetype === 'audio-synth' && intent?.templateId !== 'electron-desktop') {
+    return buildAudioSynthAppHtml(intent, files);
+  }
+  if (archetype === 'kanban' && intent?.templateId !== 'electron-desktop') {
+    return buildKanbanBoardAppHtml(intent, files);
+  }
+
   const escapedTitle = escapeHtml(intent.title);
   const escapedPrompt = escapeHtml(intent.prompt);
   const serializedIntent = JSON.stringify({

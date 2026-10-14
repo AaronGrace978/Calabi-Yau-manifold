@@ -20,9 +20,11 @@ import {
   selectTemplateForPrompt,
   parseMultiFileResponse,
   compileApplicationProject,
+  bundlePreviewHtml,
   verifyAndSelfHealProject,
   runAutonomousBuildLoop,
   isApplicationBuildPrompt,
+  isConversationalFillerPrompt,
   computeVietorisRipsPersistence,
   fisherRaoDistance,
   computeBerryGeometricPhase,
@@ -404,3 +406,74 @@ describe('Hardware-Adaptive Graphics Profiler & Auto-LOD Governor (RTX 5060 Ti, 
     assert.equal(stepDown, 'high');
   });
 });
+
+describe('Domain-Authentic App Synthesis, LLM Code Bundling & Pronoun/Filler Guardrails', () => {
+  it('builds a real multi-section responsive Landing Page for "build a landing page" and "build a landing page buddy, for the Calabi-Yau AI platform please"', () => {
+    const lp1 = compileApplicationProject('build a landing page');
+    assert.equal(lp1.templateId, 'react-vite-app');
+    assert.equal(lp1.title, 'Landing Page');
+    assert.ok(lp1.previewHtml.includes('Simple, Transparent Pricing'));
+    assert.ok(lp1.previewHtml.includes('Switch to Annual (Save 20%)'));
+    assert.ok(lp1.previewHtml.includes('Frequently Asked Questions'));
+    assert.ok(!lp1.previewHtml.includes('Landing Primary Controller'));
+    assert.ok(!lp1.previewHtml.includes('ADD LANDING MODULE'));
+    assert.ok(!lp1.previewHtml.includes('4D HYPERPLANE'));
+
+    const lp2 = compileApplicationProject('build a landing page buddy, for the Calabi-Yau AI platform please');
+    assert.equal(lp2.templateId, 'react-vite-app');
+    assert.ok(lp2.previewHtml.includes('Calabi-Yau'));
+    assert.ok(lp2.previewHtml.includes('Start Building Free'));
+    assert.ok(!lp2.previewHtml.includes('Landing Primary Controller'));
+  });
+
+  it('strips pronouns ("me") and builds a real 3D WebGL Chicken Nugget viewport for "Build me a webGL 3d Chicken nugget please"', () => {
+    const nugget = compileApplicationProject('Build me a webGL 3d Chicken nugget please');
+    assert.equal(nugget.templateId, 'webgl-shader-app');
+    assert.equal(nugget.title, 'WebGL 3D Chicken Nugget');
+    assert.equal(nugget.slug, 'webgl-3d-chicken-nugget');
+    assert.ok(nugget.previewHtml.includes('3D Crispy Chicken Nugget Mesh'));
+    assert.ok(nugget.previewHtml.includes('Classic Golden Fry'));
+    assert.ok(nugget.previewHtml.includes('Honey Mustard Glaze'));
+    assert.ok(nugget.previewHtml.includes('Take a Bite!'));
+    assert.ok(!nugget.previewHtml.includes('ADD ME MODULE'));
+    assert.ok(!nugget.previewHtml.includes('Me Primary Controller'));
+  });
+
+  it('extracts standard unnamed LLM markdown code fences (```html, ```css, ```js) and bundles them into previewHtml without overwriting', () => {
+    const llmReply = [
+      'Here is your custom landing page:',
+      '```html',
+      '<!DOCTYPE html><html><head><link rel="stylesheet" href="styles.css"></head><body><h1 id="hero">Custom LLM Landing Page</h1><script src="app.js"></script></body></html>',
+      '```',
+      '```css',
+      '#hero { color: #00f3ff; font-size: 48px; }',
+      '```',
+      '```javascript',
+      'document.getElementById("hero").dataset.ready = "true";',
+      '```',
+    ].join('\n');
+
+    const parsed = parseMultiFileResponse(llmReply);
+    assert.equal(parsed.length, 3);
+    assert.ok(parsed.some((f) => f.path === 'index.html'));
+    assert.ok(parsed.some((f) => f.path === 'styles.css'));
+    assert.ok(parsed.some((f) => f.path === 'app.js'));
+
+    const project = compileApplicationProject('build a landing page', {
+      llmResponseText: llmReply,
+    });
+    assert.ok(project.previewHtml.includes('Custom LLM Landing Page'));
+    assert.ok(project.previewHtml.includes('#hero { color: #00f3ff; font-size: 48px; }'));
+    assert.ok(project.previewHtml.includes('document.getElementById("hero").dataset.ready = "true"'));
+  });
+
+  it('blocks conversational filler words like "okay", "ok", "yes" from triggering fake builds', () => {
+    assert.equal(isConversationalFillerPrompt('okay'), true);
+    assert.equal(isConversationalFillerPrompt('OK!'), true);
+    assert.equal(isConversationalFillerPrompt('yes'), true);
+    assert.equal(isApplicationBuildPrompt('okay'), false);
+    assert.equal(isApplicationBuildPrompt('build a landing page'), true);
+    assert.equal(isApplicationBuildPrompt('Build me a webGL 3d Chicken nugget please'), true);
+  });
+});
+

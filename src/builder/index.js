@@ -7,11 +7,13 @@ export {
   compileApplicationProject,
   verifyBuildNovelty,
   buildInteractivePreviewHtml,
+  bundlePreviewHtml,
 } from './appCompiler.js';
 export {
   verifyAndSelfHealProject,
   runAutonomousBuildLoop,
   isApplicationBuildPrompt,
+  isConversationalFillerPrompt,
 } from './agentLoop.js';
 export {
   computeVietorisRipsPersistence,

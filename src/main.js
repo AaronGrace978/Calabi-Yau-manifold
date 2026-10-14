@@ -9,6 +9,8 @@ import {
   compileApplicationProject,
   runAutonomousBuildLoop,
   isApplicationBuildPrompt,
+  isConversationalFillerPrompt,
+  bundlePreviewHtml,
   buildMultiFileSystemPrompt,
   analyzeBuildIntent,
   generateFrontierWitnessDossierHtml,
@@ -777,12 +779,31 @@ const LOCAL_BUILDS_HISTORY_KEY = 'calabi_yau_multifile_builds_v2';
 let currentSandboxTitle = 'quantum-telemetry-workbench';
 let activeCompiledProject = null;
 let activeSelectedFilePath = 'index.html';
+let lastMeaningfulBuildPrompt = 'Build a landing page for the Calabi-Yau AI platform';
+
+function resolveEffectiveBuilderPrompt(rawInput = '') {
+  const trimmed = String(rawInput || '').trim();
+  if (trimmed && !isConversationalFillerPrompt(trimmed)) {
+    lastMeaningfulBuildPrompt = trimmed;
+    return trimmed;
+  }
+  if (activeCompiledProject?.prompt && !isConversationalFillerPrompt(activeCompiledProject.prompt)) {
+    return activeCompiledProject.prompt;
+  }
+  return lastMeaningfulBuildPrompt;
+}
 
 function getSavedBuildHistory() {
   try {
     const raw = localStorage.getItem(LOCAL_BUILDS_HISTORY_KEY);
     const parsed = raw ? JSON.parse(raw) : [];
-    return Array.isArray(parsed) ? parsed : [];
+    if (!Array.isArray(parsed)) return [];
+    return parsed.filter(
+      (b) =>
+        b &&
+        !isConversationalFillerPrompt(b.prompt || '') &&
+        !/^okay(?:-|$)/i.test(String(b.slug || ''))
+    );
   } catch {
     return [];
   }
@@ -790,6 +811,7 @@ function getSavedBuildHistory() {
 
 function saveBuildToHistory(projectRecord) {
   try {
+    if (isConversationalFillerPrompt(projectRecord?.prompt || '')) return;
     const history = getSavedBuildHistory().filter((b) => b.slug !== projectRecord.slug);
     history.unshift({
       slug: projectRecord.slug,
@@ -921,11 +943,15 @@ function runCodeInSandbox(rawCode, title = 'custom-live-build', fallbackPrompt =
 }
 
 async function executeAutonomousBuildFromPrompt(promptText, templateOverride = 'auto', llmResponseText = '') {
+  const effectivePrompt = resolveEffectiveBuilderPrompt(promptText);
+  if (dom.builderPromptInput && isConversationalFillerPrompt(dom.builderPromptInput.value)) {
+    dom.builderPromptInput.value = effectivePrompt;
+  }
   const guardrailMode = dom.builderGuardrailSelect?.value || 'workspace-guarded';
   const previousBuilds = getSavedBuildHistory();
 
   const builtProject = await runAutonomousBuildLoop({
-    prompt: promptText,
+    prompt: effectivePrompt,
     templateId: templateOverride,
     llmResponseText,
     guardrailMode,
@@ -1207,9 +1233,8 @@ if (dom.btnLauncherWitness) {
 
 if (dom.btnBuilderSynthesize) {
   dom.btnBuilderSynthesize.addEventListener('click', async () => {
-    const promptText =
-      dom.builderPromptInput?.value.trim() ||
-      'Build an Electron desktop modular audio synth & 4D spectrum analyzer';
+    const promptText = resolveEffectiveBuilderPrompt(dom.builderPromptInput?.value);
+    if (dom.builderPromptInput) dom.builderPromptInput.value = promptText;
     const tpl = dom.builderTemplateSelect?.value || 'auto';
     await executeAutonomousBuildFromPrompt(promptText, tpl);
   });
@@ -1219,8 +1244,10 @@ if (dom.builderPromptInput) {
   dom.builderPromptInput.addEventListener('keydown', async (e) => {
     if (e.key === 'Enter') {
       e.preventDefault();
-      const promptText = dom.builderPromptInput.value.trim();
-      if (!promptText) return;
+      const raw = dom.builderPromptInput.value.trim();
+      if (!raw) return;
+      const promptText = resolveEffectiveBuilderPrompt(raw);
+      dom.builderPromptInput.value = promptText;
       const tpl = dom.builderTemplateSelect?.value || 'auto';
       await executeAutonomousBuildFromPrompt(promptText, tpl);
     }
@@ -1259,9 +1286,16 @@ dom.btnRerunSource.addEventListener('click', () => {
   if (activeCompiledProject) {
     const fileObj = activeCompiledProject.files.find((f) => f.path === activeSelectedFilePath);
     if (fileObj) fileObj.content = edited;
-    if (activeSelectedFilePath.endsWith('.html')) {
-      activeCompiledProject.previewHtml = edited;
-      dom.sandboxIframe.srcdoc = edited;
+    const entryPath = activeCompiledProject.entryFile || 'index.html';
+    const entryFile = activeCompiledProject.files.find((f) => f.path === entryPath);
+    if (entryFile) {
+      const bundled = bundlePreviewHtml(
+        entryFile.content,
+        activeCompiledProject.files.map((f) => ({ ...f, fromLlm: true })),
+        activeCompiledProject.intent
+      );
+      activeCompiledProject.previewHtml = bundled;
+      dom.sandboxIframe.srcdoc = bundled;
       return;
     }
   }
@@ -1876,6 +1910,13 @@ async function handlePromptSubmission(forceSimulation = false) {
     prompt ||
     `Render a highly unstable, multi-sheeted projection of the Fermat quintic threefold topology. Force the vertex shader to map Euler's constant to the phase angle xi, and scale the continuous Simplex Noise amplitude based on an artificial 0.500 THz inference burst.`;
   dom.promptInput.value = '';
+
+  if (!isConversationalFillerPrompt(effectivePrompt) && isApplicationBuildPrompt(effectivePrompt)) {
+    lastMeaningfulBuildPrompt = effectivePrompt;
+    if (dom.builderPromptInput) {
+      dom.builderPromptInput.value = effectivePrompt;
+    }
+  }
 
   if (
     /euler|quintic|thz|oversaturat|over-saturat|unstable|sheet|tesseract|24-cell|hopf|klein|kaluza|e8|g2|m-theory|hyperplane|slice|4d|5d|7d|8d|11d/i.test(
