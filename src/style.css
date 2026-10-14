@@ -714,3 +714,300 @@ body {
   background: rgba(255, 30, 155, 0.22);
   box-shadow: 0 0 12px rgba(255, 30, 155, 0.4);
 }
+
+.hud-chip-btn.launcher-btn,
+.hud-chip-btn.emerald {
+  color: var(--neon-emerald);
+  border-color: rgba(0, 255, 163, 0.4);
+  background: rgba(0, 255, 163, 0.09);
+}
+
+.hud-chip-btn.launcher-btn:hover,
+.hud-chip-btn.emerald:hover {
+  background: rgba(0, 255, 163, 0.22);
+  border-color: var(--neon-emerald);
+  box-shadow: 0 0 14px rgba(0, 255, 163, 0.35);
+}
+
+/* Reasoning / Thinking Collapsible Drawer in Chat Bubble */
+.thinking-drawer {
+  margin-bottom: 8px;
+  border: 1px dashed rgba(140, 82, 255, 0.4);
+  border-radius: 5px;
+  background: rgba(14, 10, 32, 0.72);
+  overflow: hidden;
+}
+
+.thinking-summary {
+  padding: 5px 9px;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  color: #b794ff;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  user-select: none;
+}
+
+.thinking-summary:hover {
+  background: rgba(140, 82, 255, 0.14);
+}
+
+.thinking-body {
+  padding: 8px 10px;
+  border-top: 1px solid rgba(140, 82, 255, 0.22);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  line-height: 1.45;
+  color: #9ab0d0;
+  max-height: 180px;
+  overflow-y: auto;
+  white-space: pre-wrap;
+}
+
+/* Extracted Code Artifact Card & Action Harness Bar */
+.artifact-harness-card {
+  margin-top: 10px;
+  border: 1px solid rgba(0, 243, 255, 0.38);
+  border-radius: 6px;
+  background: rgba(4, 9, 22, 0.92);
+  overflow: hidden;
+}
+
+.artifact-harness-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 6px 10px;
+  background: rgba(0, 243, 255, 0.1);
+  border-bottom: 1px solid rgba(0, 243, 255, 0.22);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--neon-cyan);
+}
+
+.artifact-harness-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 8px 10px;
+  background: rgba(7, 13, 28, 0.95);
+}
+
+.artifact-btn {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  padding: 5px 9px;
+  border-radius: 4px;
+  border: 1px solid var(--border-dim);
+  background: rgba(0, 243, 255, 0.1);
+  color: var(--neon-cyan);
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.artifact-btn:hover {
+  background: var(--neon-cyan);
+  color: var(--bg-void);
+  box-shadow: 0 0 12px rgba(0, 243, 255, 0.45);
+}
+
+.artifact-btn.launch {
+  border-color: var(--neon-emerald);
+  color: var(--neon-emerald);
+  background: rgba(0, 255, 163, 0.12);
+}
+
+.artifact-btn.launch:hover {
+  background: var(--neon-emerald);
+  color: var(--bg-void);
+  box-shadow: 0 0 14px rgba(0, 255, 163, 0.55);
+}
+
+.artifact-btn.manifold {
+  border-color: var(--neon-magenta);
+  color: var(--neon-magenta);
+  background: rgba(255, 30, 155, 0.12);
+}
+
+.artifact-btn.manifold:hover {
+  background: var(--neon-magenta);
+  color: #fff;
+  box-shadow: 0 0 14px rgba(255, 30, 155, 0.55);
+}
+
+.artifact-status-line {
+  padding: 4px 10px 7px;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--neon-emerald);
+}
+
+/* Live WebGL Build Launcher & Machine Harness Modal */
+.launcher-modal {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  background: rgba(2, 5, 12, 0.84);
+  backdrop-filter: blur(12px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+}
+
+.launcher-modal.hidden {
+  display: none;
+}
+
+.launcher-dialog {
+  width: min(1360px, 96vw);
+  height: min(860px, 92vh);
+  background: rgba(6, 11, 24, 0.96);
+  border: 1px solid var(--border-bright);
+  border-radius: 8px;
+  box-shadow: 0 24px 64px rgba(0, 0, 0, 0.85), 0 0 32px rgba(0, 243, 255, 0.18);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.launcher-header {
+  padding: 10px 16px;
+  background: rgba(4, 8, 18, 0.95);
+  border-bottom: 1px solid var(--border-dim);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.launcher-title-group {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  color: var(--text-primary);
+}
+
+.launcher-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.launcher-body {
+  flex: 1;
+  display: grid;
+  grid-template-columns: 360px 1fr;
+  min-height: 0;
+}
+
+.launcher-sidebar {
+  border-right: 1px solid var(--border-dim);
+  background: rgba(5, 9, 20, 0.92);
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.sidebar-section-header {
+  padding: 8px 12px;
+  border-bottom: 1px solid rgba(0, 243, 255, 0.14);
+  font-family: var(--font-mono);
+  font-size: 9.5px;
+  letter-spacing: 0.1em;
+  color: var(--text-secondary);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.mini-link-btn {
+  font-family: var(--font-mono);
+  font-size: 9px;
+  color: var(--neon-cyan);
+  background: rgba(0, 243, 255, 0.1);
+  border: 1px solid rgba(0, 243, 255, 0.3);
+  border-radius: 3px;
+  padding: 2px 6px;
+  cursor: pointer;
+}
+
+.mini-link-btn:hover {
+  background: var(--neon-cyan);
+  color: var(--bg-void);
+}
+
+.saved-projects-list {
+  max-height: 185px;
+  overflow-y: auto;
+  padding: 8px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  border-bottom: 1px solid var(--border-dim);
+}
+
+.saved-project-item {
+  padding: 6px 8px;
+  border-radius: 4px;
+  background: rgba(0, 243, 255, 0.05);
+  border: 1px solid rgba(0, 243, 255, 0.16);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--text-primary);
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.saved-project-item .project-path {
+  font-size: 9px;
+  color: var(--text-secondary);
+  word-break: break-all;
+}
+
+.saved-project-empty {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--text-secondary);
+  line-height: 1.45;
+}
+
+.launcher-source-editor {
+  flex: 1;
+  width: 100%;
+  background: #03060f;
+  color: #b8f4ff;
+  border: none;
+  padding: 10px 12px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  line-height: 1.45;
+  resize: none;
+  outline: none;
+}
+
+.launcher-stage {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  background: #000;
+}
+
+.sandbox-iframe {
+  width: 100%;
+  height: 100%;
+  border: none;
+  display: block;
+  background: #000;
+}
+

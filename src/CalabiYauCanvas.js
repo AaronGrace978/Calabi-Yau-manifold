@@ -692,6 +692,52 @@ export class CalabiYauCanvas {
     }
   }
 
+  /**
+   * Parses natural-language or code directives (e.g. "map Euler's constant to the phase angle xi",
+   * "0.500 THz inference burst", "over-saturated glowing holographic wireframe") and applies them
+   * directly to the live 3D Calabi-Yau manifold.
+   */
+  applyManifoldDirective(directiveText = '') {
+    const text = directiveText.toLowerCase();
+    const applied = {};
+
+    if (text.includes('euler') || text.includes('math.e') || text.includes('2.718')) {
+      this.projectionAngle = Math.E;
+      applied.projectionAngle = Math.E;
+    }
+
+    const degreeMatch = text.match(/\b(quintic|sextic|septimic|quartic|cubic)\b/);
+    if (degreeMatch) {
+      const map = { cubic: 3, quartic: 4, quintic: 5, sextic: 6, septimic: 7 };
+      this.exponentN = map[degreeMatch[1]] || 5;
+      applied.exponentN = this.exponentN;
+    }
+
+    const thzMatch = text.match(/(\d+(?:\.\d+)?)\s*thz/i);
+    const burstThz = thzMatch ? parseFloat(thzMatch[1]) : 0.5;
+
+    if (text.includes('unstable') || text.includes('burst') || thzMatch) {
+      this.baseAmplitude = Math.min(0.32, Math.max(0.08, burstThz * 0.42));
+      this.vibrationAmplitude = Math.min(0.82, burstThz * 1.15);
+      this.targetAmplitude = this.vibrationAmplitude;
+      this.baseFrequency = Math.min(3.8, 1.4 + burstThz * 2.4);
+      this.quantumFrequency = this.baseFrequency;
+      this.targetFrequency = this.baseFrequency;
+      applied.burstThz = burstThz;
+    }
+
+    if (text.includes('over-saturated') || text.includes('oversaturated') || text.includes('holographic')) {
+      this.baseSaturation = 0.98;
+      this.colorSaturation = 1.0;
+      this.targetSaturation = 1.0;
+      applied.saturation = 1.0;
+    }
+
+    this.buildCalabiYauManifold();
+    this.triggerQuantumPulse(Math.max(1.6, burstThz * 3.0), 'DIRECTIVE_LOCK');
+    return applied;
+  }
+
   bindInteractionEvents() {
     const dom = this.renderer.domElement;
 

@@ -24,6 +24,9 @@
           <button id="btn-sync-models" class="hud-chip-btn" title="Fetch Live Models from Active Provider">
             SYNC MODELS
           </button>
+          <button id="btn-build-launcher" class="hud-chip-btn launcher-btn" title="Open Live WebGL Build Launcher &amp; Machine Project Harness">
+            BUILD LAUNCHER // PROJECTS
+          </button>
           <button id="btn-toggle-layout" class="hud-chip-btn" title="Toggle Fullscreen Manifold / Split View">
             SPLIT // HUD
           </button>
@@ -212,7 +215,7 @@
               id="prompt-input"
               class="cyber-textarea"
               rows="2"
-              placeholder="Transmit query to selected cloud/local manifold... (Enter to send, Shift+Enter for newline)"
+              placeholder="Transmit query or shader directive to selected manifold... (Enter to send, Shift+Enter for newline)"
               required
             ></textarea>
             <div class="chat-actions-col">
@@ -226,6 +229,72 @@
           </form>
         </section>
       </main>
+
+      <!-- Live WebGL Build Launcher & Machine Filesystem Harness Modal -->
+      <div id="build-launcher-modal" class="launcher-modal hidden">
+        <div class="launcher-dialog">
+          <header class="launcher-header">
+            <div class="launcher-title-group">
+              <span class="brand-glyph">BUILD // HARNESS</span>
+              <span id="launcher-title">LIVE WEBGL SHADER SANDBOX &amp; DISK HARNESS</span>
+              <span id="launcher-status-pill" class="env-pill">~/CalabiYauProjects</span>
+            </div>
+            <div class="launcher-actions">
+              <button id="btn-launcher-preset" class="hud-chip-btn" title="Load Fermat Quintic Euler ξ = e (0.500 THz) Hologram Preset">
+                LOAD EULER 0.5THz SHADER
+              </button>
+              <button id="btn-launcher-save-disk" class="hud-chip-btn emerald" title="Save active build directly to ~/CalabiYauProjects on your machine">
+                SAVE TO MACHINE
+              </button>
+              <button id="btn-launcher-native-win" class="hud-chip-btn" title="Spawn a dedicated native OS window running this build">
+                SPAWN NATIVE WINDOW
+              </button>
+              <button id="btn-launcher-download" class="hud-chip-btn" title="Download standalone .html artifact">
+                DOWNLOAD .HTML
+              </button>
+              <button id="btn-launcher-close" class="hud-chip-btn accent">
+                CLOSE [ESC]
+              </button>
+            </div>
+          </header>
+
+          <div class="launcher-body">
+            <!-- Left Sidebar: Saved Machine Projects & Artifact Source -->
+            <aside class="launcher-sidebar">
+              <div class="sidebar-section-header">
+                <span>SAVED MACHINE PROJECTS</span>
+                <button id="btn-refresh-projects" class="mini-link-btn">REFRESH</button>
+              </div>
+              <div id="saved-projects-list" class="saved-projects-list">
+                <div class="saved-project-empty">
+                  Projects saved via the native Rust harness are stored in <code>~/CalabiYauProjects/</code>.
+                </div>
+              </div>
+
+              <div class="sidebar-section-header">
+                <span>EDITABLE ARTIFACT SOURCE (HTML / GLSL)</span>
+                <button id="btn-rerun-source" class="mini-link-btn">RUN CODE &#9654;</button>
+              </div>
+              <textarea
+                id="launcher-source-editor"
+                class="launcher-source-editor"
+                spellcheck="false"
+                placeholder="Paste or edit generated HTML / Three.js / GLSL shader code here and click RUN CODE..."
+              ></textarea>
+            </aside>
+
+            <!-- Right Stage: Live Sandboxed WebGL / Three.js Runner -->
+            <section class="launcher-stage">
+              <iframe
+                id="sandbox-iframe"
+                class="sandbox-iframe"
+                sandbox="allow-scripts allow-same-origin"
+                title="Calabi-Yau Live Shader Build Runner"
+              ></iframe>
+            </section>
+          </div>
+        </div>
+      </div>
     </div>
 
     <script type="module" src="/src/main.js"></script>

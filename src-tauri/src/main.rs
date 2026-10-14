@@ -8,8 +8,10 @@ use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::env;
-use std::time::Instant;
-use tauri::Window;
+use std::fs;
+use std::path::PathBuf;
+use std::time::{Instant, SystemTime, UNIX_EPOCH};
+use tauri::{AppHandle, Window, WindowBuilder, WindowUrl};
 
 /// Calculates a normalized quantum string vibration frequency metric in the range [0.08, 5.0]
 /// derived from instantaneous token generation velocity (tokens/sec), token byte entropy,
@@ -108,26 +110,22 @@ fn default_endpoint_for_provider(provider_id: &str, model: &str) -> String {
     }
 }
 
-/// Extracts a token snippet from any supported streaming JSON frame:
-/// - Ollama NDJSON (`/api/chat` -> `message.content`/`message.thinking` or `/api/generate` -> `response`)
-/// - OpenAI / xAI / DeepSeek / Groq / OpenRouter / Mistral / Together / Fireworks SSE (`choices[0].delta.content` or `reasoning_content`)
-/// - Anthropic Messages SSE (`delta.text` or `delta.thinking`)
-/// - Google Gemini SSE (`candidates[0].content.parts[0].text`)
-fn extract_token_from_json(val: &Value) -> (String, bool) {
+/// Extracts a token snippet from any supported streaming JSON frame.
+/// Separates `thinking` tokens from `content` tokens so reasoning traces don't pollute code blocks
+/// unless `content` is empty.
+fn extract_token_from_json(val: &Value) -> (String, bool, bool) {
     let mut is_done = val.get("done").and_then(|d| d.as_bool()).unwrap_or(false);
 
     if let Some(event_type) = val.get("type").and_then(|t| t.as_str()) {
-        if event_type == "message_stop" || event_type == "content_block_stop" {
-            if event_type == "message_stop" {
-                is_done = true;
-            }
+        if event_type == "message_stop" {
+            is_done = true;
         }
     }
 
     // 1. Ollama `/api/generate` format
     if let Some(resp) = val.get("response").and_then(|r| r.as_str()) {
         if !resp.is_empty() {
-            return (resp.to_string(), is_done);
+            return (resp.to_string(), false, is_done);
         }
     }
 
@@ -135,12 +133,12 @@ fn extract_token_from_json(val: &Value) -> (String, bool) {
     if let Some(msg) = val.get("message") {
         if let Some(content) = msg.get("content").and_then(|c| c.as_str()) {
             if !content.is_empty() {
-                return (content.to_string(), is_done);
+                return (content.to_string(), false, is_done);
             }
         }
         if let Some(thinking) = msg.get("thinking").and_then(|t| t.as_str()) {
             if !thinking.is_empty() {
-                return (thinking.to_string(), is_done);
+                return (thinking.to_string(), true, is_done);
             }
         }
     }
@@ -158,7 +156,7 @@ fn extract_token_from_json(val: &Value) -> (String, bool) {
             if let Some(delta) = first.get("delta") {
                 if let Some(content) = delta.get("content").and_then(|c| c.as_str()) {
                     if !content.is_empty() {
-                        return (content.to_string(), is_done);
+                        return (content.to_string(), false, is_done);
                     }
                 }
                 if let Some(reasoning) = delta
@@ -167,7 +165,7 @@ fn extract_token_from_json(val: &Value) -> (String, bool) {
                     .and_then(|r| r.as_str())
                 {
                     if !reasoning.is_empty() {
-                        return (reasoning.to_string(), is_done);
+                        return (reasoning.to_string(), true, is_done);
                     }
                 }
             }
@@ -178,12 +176,12 @@ fn extract_token_from_json(val: &Value) -> (String, bool) {
     if let Some(delta) = val.get("delta") {
         if let Some(text) = delta.get("text").and_then(|t| t.as_str()) {
             if !text.is_empty() {
-                return (text.to_string(), is_done);
+                return (text.to_string(), false, is_done);
             }
         }
         if let Some(thinking) = delta.get("thinking").and_then(|t| t.as_str()) {
             if !thinking.is_empty() {
-                return (thinking.to_string(), is_done);
+                return (thinking.to_string(), true, is_done);
             }
         }
     }
@@ -203,13 +201,13 @@ fn extract_token_from_json(val: &Value) -> (String, bool) {
                     }
                 }
                 if !combined.is_empty() {
-                    return (combined, is_done);
+                    return (combined, false, is_done);
                 }
             }
         }
     }
 
-    (String::new(), is_done)
+    (String::new(), false, is_done)
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -300,6 +298,161 @@ async fn fetch_provider_models(
     Ok(result)
 }
 
+/// Resolves the local machine directory where generated Calabi-Yau projects/artifacts are saved.
+/// Uses `~/CalabiYauProjects` (or `./CalabiYauProjects` fallback) and creates it if needed.
+fn resolve_projects_directory() -> Result<PathBuf, String> {
+    let base = env::var("HOME")
+        .or_else(|_| env::var("USERPROFILE"))
+        .map(PathBuf::from)
+        .unwrap_or_else(|_| env::current_dir().unwrap_or_else(|_| PathBuf::from(".")));
+
+    let projects_dir = base.join("CalabiYauProjects");
+    fs::create_dir_all(&projects_dir)
+        .map_err(|e| format!("Failed to create projects directory {:?}: {e}", projects_dir))?;
+    Ok(projects_dir)
+}
+
+fn sanitize_filename(name: &str, default_ext: &str) -> String {
+    let cleaned: String = name
+        .chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || c == '-' || c == '_' || c == '.' {
+                c
+            } else {
+                '-'
+            }
+        })
+        .collect();
+    let trimmed = cleaned.trim_matches('-');
+    let base = if trimmed.is_empty() {
+        let ts = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0);
+        format!("calabi-yau-artifact-{ts}")
+    } else {
+        trimmed.to_string()
+    };
+
+    if base.contains('.') {
+        base
+    } else {
+        format!("{base}.{default_ext}")
+    }
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+struct SavedArtifactInfo {
+    filename: String,
+    path: String,
+    bytes: usize,
+    directory: String,
+}
+
+/// Native machine harness: saves any LLM-generated HTML/GLSL/JS/Rust code block or full project
+/// directly to `~/CalabiYauProjects/<filename>` on the user's machine.
+#[tauri::command]
+async fn save_artifact_to_disk(
+    filename: String,
+    content: String,
+    extension: Option<String>,
+) -> Result<SavedArtifactInfo, String> {
+    let projects_dir = resolve_projects_directory()?;
+    let ext = extension.as_deref().unwrap_or("html");
+    let safe_name = sanitize_filename(&filename, ext);
+    let full_path = projects_dir.join(&safe_name);
+
+    fs::write(&full_path, content.as_bytes())
+        .map_err(|e| format!("Failed to write artifact to {:?}: {e}", full_path))?;
+
+    Ok(SavedArtifactInfo {
+        filename: safe_name,
+        path: full_path.to_string_lossy().to_string(),
+        bytes: content.len(),
+        directory: projects_dir.to_string_lossy().to_string(),
+    })
+}
+
+/// Lists all saved projects/artifacts inside `~/CalabiYauProjects`.
+#[tauri::command]
+async fn list_saved_artifacts() -> Result<Vec<SavedArtifactInfo>, String> {
+    let projects_dir = resolve_projects_directory()?;
+    let dir_str = projects_dir.to_string_lossy().to_string();
+    let mut items = Vec::new();
+
+    if let Ok(entries) = fs::read_dir(&projects_dir) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_file() {
+                let bytes = entry.metadata().map(|m| m.len() as usize).unwrap_or(0);
+                let filename = path
+                    .file_name()
+                    .and_then(|n| n.to_str())
+                    .unwrap_or("artifact.html")
+                    .to_string();
+                items.push(SavedArtifactInfo {
+                    filename,
+                    path: path.to_string_lossy().to_string(),
+                    bytes,
+                    directory: dir_str.clone(),
+                });
+            }
+        }
+    }
+
+    items.sort_by(|a, b| b.filename.cmp(&a.filename));
+    Ok(items)
+}
+
+/// Native Build Launcher: saves the generated WebGL/Three.js artifact to disk AND spawns
+/// a dedicated hardware-accelerated Tauri window executing the live shader/project.
+#[tauri::command]
+async fn launch_artifact_window(
+    app: AppHandle,
+    title: String,
+    html_content: String,
+    filename: Option<String>,
+) -> Result<SavedArtifactInfo, String> {
+    let desired_name = filename.unwrap_or_else(|| "calabi-yau-live-build.html".to_string());
+    let saved = save_artifact_to_disk(desired_name, html_content.clone(), Some("html".to_string())).await?;
+
+    let ts = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_millis())
+        .unwrap_or(1);
+    let label = format!("cy-launcher-{ts}");
+
+    let data_url = format!(
+        "data:text/html;charset=utf-8,{}",
+        urlencoding_encode(&html_content)
+    );
+
+    if let Ok(parsed_url) = data_url.parse() {
+        let _ = WindowBuilder::new(&app, label, WindowUrl::External(parsed_url))
+            .title(format!("Calabi-Yau Build Launcher // {title} ({})", saved.filename))
+            .inner_size(1180.0, 820.0)
+            .resizable(true)
+            .build();
+    }
+
+    Ok(saved)
+}
+
+fn urlencoding_encode(input: &str) -> String {
+    let mut out = String::with_capacity(input.len() * 2);
+    for b in input.bytes() {
+        match b {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
+                out.push(b as char);
+            }
+            _ => {
+                out.push_str(&format!("%{:02X}", b));
+            }
+        }
+    }
+    out
+}
+
 #[tauri::command]
 async fn generate_calabi_yau_response(
     window: Window,
@@ -388,8 +541,6 @@ async fn generate_calabi_yau_response(
             })
         }
         _ => {
-            // OpenAI-compatible chat completions (OpenAI, xAI, DeepSeek, Groq, OpenRouter,
-            // Mistral, Together, Fireworks, Perplexity, Cerebras, SambaNova, Cohere, Qwen, GLM, Kimi, MiniMax, NVIDIA, Meta)
             if let Some(ref key) = resolved_key {
                 req = req.bearer_auth(key);
             }
@@ -452,7 +603,7 @@ async fn generate_calabi_yau_response(
                 continue;
             };
 
-            let (token_piece, is_done) = extract_token_from_json(&parsed_val);
+            let (token_piece, is_thinking, is_done) = extract_token_from_json(&parsed_val);
 
             if !token_piece.is_empty() {
                 let now = Instant::now();
@@ -461,11 +612,15 @@ async fn generate_calabi_yau_response(
                 token_index += 1;
 
                 let quantum_metric = compute_quantum_metric(&token_piece, dt, token_index);
-                full_output.push_str(&token_piece);
 
-                window
-                    .emit("token-received", &token_piece)
-                    .map_err(|e| format!("Failed to emit token-received event: {e}"))?;
+                if is_thinking {
+                    let _ = window.emit("thinking-received", &token_piece);
+                } else {
+                    full_output.push_str(&token_piece);
+                    window
+                        .emit("token-received", &token_piece)
+                        .map_err(|e| format!("Failed to emit token-received event: {e}"))?;
+                }
 
                 window
                     .emit("quantum-metric", quantum_metric)
@@ -481,16 +636,23 @@ async fn generate_calabi_yau_response(
 
     let remaining = line_buffer.trim();
     if !remaining.is_empty() {
-        let json_payload = remaining.strip_prefix("data:").map(|s| s.trim()).unwrap_or(remaining);
+        let json_payload = remaining
+            .strip_prefix("data:")
+            .map(|s| s.trim())
+            .unwrap_or(remaining);
         if json_payload != "[DONE]" {
             if let Ok(parsed_val) = serde_json::from_str::<Value>(json_payload) {
-                let (token_piece, _) = extract_token_from_json(&parsed_val);
+                let (token_piece, is_thinking, _) = extract_token_from_json(&parsed_val);
                 if !token_piece.is_empty() {
                     let dt = last_token_instant.elapsed().as_secs_f64();
                     token_index += 1;
                     let quantum_metric = compute_quantum_metric(&token_piece, dt, token_index);
-                    full_output.push_str(&token_piece);
-                    let _ = window.emit("token-received", &token_piece);
+                    if is_thinking {
+                        let _ = window.emit("thinking-received", &token_piece);
+                    } else {
+                        full_output.push_str(&token_piece);
+                        let _ = window.emit("token-received", &token_piece);
+                    }
                     let _ = window.emit("quantum-metric", quantum_metric);
                 }
             }
@@ -504,7 +666,10 @@ fn main() {
     tauri::Builder::default()
         .invoke_handler(tauri::generate_handler![
             generate_calabi_yau_response,
-            fetch_provider_models
+            fetch_provider_models,
+            save_artifact_to_disk,
+            list_saved_artifacts,
+            launch_artifact_window
         ])
         .run(tauri::generate_context!())
         .expect("error while running Calabi-Yau AI Platform Tauri application");

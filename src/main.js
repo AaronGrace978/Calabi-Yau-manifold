@@ -8,6 +8,236 @@ const isTauriDesktop =
   typeof window !== 'undefined' &&
   Boolean(window.__TAURI_IPC__ || window.__TAURI_METADATA__ || window.__TAURI__);
 
+/**
+ * Default standalone WebGL / Three.js / GLSL Fermat Quintic Holographic Wireframe preset
+ * (matching the DeepSeek-V4.1-Flash Euler xi = e, 0.500 THz Simplex Noise burst shader).
+ */
+const DEFAULT_EULER_QUINTIC_BUILD_HTML = `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Fermat Quintic Holographic Wireframe (xi = e, 0.500 THz)</title>
+  <style>
+    body { margin: 0; overflow: hidden; background: #000; font-family: monospace; }
+    canvas { display: block; }
+    .hud-tag {
+      position: fixed; top: 12px; left: 14px; color: #00f3ff;
+      background: rgba(4, 10, 24, 0.82); border: 1px solid rgba(0, 243, 255, 0.4);
+      padding: 6px 10px; border-radius: 4px; font-size: 11px; letter-spacing: 0.08em;
+      pointer-events: none;
+    }
+  </style>
+</head>
+<body>
+  <div class="hud-tag">FERMAT QUINTIC Σ zᵢ⁵ = 0 // ξ = e (2.71828 rad) // 0.500 THz SIMPLEX BURST</div>
+  <script type="importmap">
+    {
+      "imports": {
+        "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+        "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+      }
+    }
+  </script>
+  <script type="module">
+    import * as THREE from 'three';
+    import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+    import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
+    import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
+    import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
+
+    const vertexShader = \`
+      uniform float uTime;
+      uniform float uEuler;
+      uniform float uBurstFreq;
+      uniform float uNoiseAmp;
+      uniform float uSheet;
+      uniform float uXiOffset;
+
+      varying vec3 vColor;
+      varying float vIntensity;
+
+      vec3 mod289(vec3 x) { return x - floor(x * (1.0 / 289.0)) * 289.0; }
+      vec4 mod289(vec4 x) { return x - floor(x * (1.0 / 289.0)) * 289.0; }
+      vec4 permute(vec4 x) { return mod289(((x*34.0)+1.0)*x); }
+      vec4 taylorInvSqrt(vec4 r) { return 1.79284291400159 - 0.85373472095314 * r; }
+
+      float snoise(vec3 v) {
+        const vec2 C = vec2(1.0/6.0, 1.0/3.0);
+        const vec4 D = vec4(0.0, 0.5, 1.0, 2.0);
+        vec3 i  = floor(v + dot(v, C.yyy));
+        vec3 x0 = v - i + dot(i, C.xxx);
+        vec3 g = step(x0.yzx, x0.xyz);
+        vec3 l = 1.0 - g;
+        vec3 i1 = min(g.xyz, l.zxy);
+        vec3 i2 = max(g.xyz, l.zxy);
+        vec3 x1 = x0 - i1 + C.xxx;
+        vec3 x2 = x0 - i2 + C.yyy;
+        vec3 x3 = x0 - D.yyy;
+        i = mod289(i);
+        vec4 p = permute(permute(permute(
+                   i.z + vec4(0.0, i1.z, i2.z, 1.0))
+                 + i.y + vec4(0.0, i1.y, i2.y, 1.0))
+                 + i.x + vec4(0.0, i1.x, i2.x, 1.0));
+        float n_ = 0.142857142857;
+        vec3 ns = n_ * D.wyz - D.xzx;
+        vec4 j = p - 49.0 * floor(p * ns.z * ns.z);
+        vec4 x_ = floor(j * ns.z);
+        vec4 y_ = floor(j - 7.0 * x_);
+        vec4 x = x_ * ns.x + ns.yyyy;
+        vec4 y = y_ * ns.x + ns.yyyy;
+        vec4 h = 1.0 - abs(x) - abs(y);
+        vec4 b0 = vec4(x.xy, y.xy);
+        vec4 b1 = vec4(x.zw, y.zw);
+        vec4 s0 = floor(b0) * 2.0 + 1.0;
+        vec4 s1 = floor(b1) * 2.0 + 1.0;
+        vec4 sh = -step(h, vec4(0.0));
+        vec4 a0 = b0.xzyw + s0.xzyw * sh.xxyy;
+        vec4 a1 = b1.xzyw + s1.xzyw * sh.zzww;
+        vec3 p0 = vec3(a0.xy, h.x);
+        vec3 p1 = vec3(a0.zw, h.y);
+        vec3 p2 = vec3(a1.xy, h.z);
+        vec3 p3 = vec3(a1.zw, h.w);
+        vec4 norm = taylorInvSqrt(vec4(dot(p0,p0), dot(p1,p1), dot(p2,p2), dot(p3,p3)));
+        p0 *= norm.x; p1 *= norm.y; p2 *= norm.z; p3 *= norm.w;
+        vec4 m = max(0.6 - vec4(dot(x0,x0), dot(x1,x1), dot(x2,x2), dot(x3,x3)), 0.0);
+        m = m * m;
+        return 42.0 * dot(m*m, vec4(dot(p0,x0), dot(p1,x1), dot(p2,x2), dot(p3,x3)));
+      }
+
+      void main() {
+        vec3 pos = position;
+        vec3 nor = normalize(normal);
+
+        // Map Euler's constant e to phase angle xi
+        float xi = uEuler * (pos.x * 1.3 + pos.y * 0.7 + pos.z * 1.1 + uTime * 0.1) + uXiOffset;
+
+        float theta0 = xi * 1.0 + pos.x * 2.0;
+        float theta1 = xi * 1.3 + pos.y * 2.3;
+        float theta2 = xi * 1.7 + pos.z * 2.7;
+        float theta3 = xi * 2.1 + (pos.x + pos.y) * 1.9;
+        float theta4 = xi * 2.5 + (pos.y + pos.z) * 2.1;
+
+        vec2 F = vec2(cos(5.0 * theta0), sin(5.0 * theta0))
+               + vec2(cos(5.0 * theta1), sin(5.0 * theta1))
+               + vec2(cos(5.0 * theta2), sin(5.0 * theta2))
+               + vec2(cos(5.0 * theta3), sin(5.0 * theta3))
+               + vec2(cos(5.0 * theta4), sin(5.0 * theta4));
+
+        float fMag = length(F);
+        float fermatWarp = (F.x * F.y) * 0.35 + (1.0 - fMag) * 0.2;
+
+        // Artificial 0.500 THz inference burst envelope
+        float burstPhase = uTime * 6.28318530718 * uBurstFreq * 12.0;
+        float burst = pow(0.5 + 0.5 * sin(burstPhase), 4.0);
+
+        float noiseAmp = uNoiseAmp * (0.15 + 0.85 * burst);
+        float noise1 = snoise(pos * 2.5 + vec3(xi * 0.5, uTime * 0.3, uSheet * 10.0));
+        float noise2 = snoise(pos * 5.0 + vec3(uTime * 0.7, xi * 0.2, uSheet * 5.0));
+
+        vec3 sheetOffset = vec3(
+          sin(xi * 2.0 + uSheet * 1.7),
+          cos(xi * 3.0 + uSheet * 2.3),
+          sin(xi * 5.0 + uSheet * 3.1)
+        ) * 0.25 * uSheet;
+
+        float displacement = fermatWarp + (noise1 * 0.6 + noise2 * 0.4) * noiseAmp;
+        pos += nor * displacement + sheetOffset;
+
+        float hue = fract(xi * 0.15 + fMag * 0.5 + uTime * 0.05);
+        vec3 colorA = vec3(0.0, 1.0, 1.0);
+        vec3 colorB = vec3(1.0, 0.0, 1.0);
+        vec3 colorC = vec3(1.0, 1.0, 0.0);
+        vColor = mix(mix(colorA, colorB, hue), colorC, burst * 0.5);
+        vIntensity = 0.85 + 1.55 * burst + 0.5 * abs(F.x);
+
+        gl_Position = projectionMatrix * modelViewMatrix * vec4(pos, 1.0);
+      }
+    \`;
+
+    const fragmentShader = \`
+      uniform float uTime;
+      varying vec3 vColor;
+      varying float vIntensity;
+
+      void main() {
+        vec3 color = vColor * vIntensity;
+        float scan = sin(gl_FragCoord.y * 0.5 + uTime * 20.0) * 0.1 + 0.9;
+        color = pow(color * scan, vec3(0.8));
+        gl_FragColor = vec4(color, 1.0);
+      }
+    \`;
+
+    const scene = new THREE.Scene();
+    scene.background = new THREE.Color(0x000000);
+    const camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 1000);
+    camera.position.set(0, 0, 5);
+
+    const renderer = new THREE.WebGLRenderer({ antialias: true });
+    renderer.setSize(window.innerWidth, window.innerHeight);
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    document.body.appendChild(renderer.domElement);
+
+    const controls = new OrbitControls(camera, renderer.domElement);
+    controls.enableDamping = true;
+    controls.autoRotate = true;
+    controls.autoRotateSpeed = 0.7;
+
+    const geometry = new THREE.IcosahedronGeometry(1.5, 5);
+    const sheets = 5;
+    const materials = [];
+
+    for (let i = 0; i < sheets; i++) {
+      const material = new THREE.ShaderMaterial({
+        uniforms: {
+          uTime:      { value: 0 },
+          uEuler:     { value: Math.E },
+          uBurstFreq: { value: 0.5 },
+          uNoiseAmp:  { value: 0.8 },
+          uSheet:     { value: i - (sheets - 1) / 2 },
+          uXiOffset:  { value: i * 1.2 }
+        },
+        vertexShader,
+        fragmentShader,
+        wireframe: true,
+        transparent: true,
+        blending: THREE.AdditiveBlending,
+        depthWrite: false,
+        side: THREE.DoubleSide
+      });
+
+      const mesh = new THREE.Mesh(geometry, material);
+      mesh.rotation.x = i * 0.2;
+      mesh.rotation.y = i * 0.3;
+      mesh.scale.setScalar(1.0 + i * 0.05);
+      scene.add(mesh);
+      materials.push(material);
+    }
+
+    const composer = new EffectComposer(renderer);
+    composer.addPass(new RenderPass(scene, camera));
+    composer.addPass(new UnrealBloomPass(new THREE.Vector2(window.innerWidth, window.innerHeight), 2.4, 0.8, 0.1));
+
+    const clock = new THREE.Clock();
+    function animate() {
+      requestAnimationFrame(animate);
+      const t = clock.getElapsedTime();
+      materials.forEach(m => { m.uniforms.uTime.value = t; });
+      controls.update();
+      composer.render();
+    }
+    animate();
+
+    window.addEventListener('resize', () => {
+      camera.aspect = window.innerWidth / window.innerHeight;
+      camera.updateProjectionMatrix();
+      renderer.setSize(window.innerWidth, window.innerHeight);
+      composer.setSize(window.innerWidth, window.innerHeight);
+    });
+  </script>
+</body>
+</html>`;
+
 const dom = {
   viewport: document.getElementById('calabi-yau-viewport'),
   workspaceGrid: document.getElementById('workspace-grid'),
@@ -30,6 +260,7 @@ const dom = {
   valResolution: document.getElementById('val-resolution'),
   btnToggleConfig: document.getElementById('btn-toggle-config'),
   btnSyncModels: document.getElementById('btn-sync-models'),
+  btnBuildLauncher: document.getElementById('btn-build-launcher'),
   btnToggleLayout: document.getElementById('btn-toggle-layout'),
   btnPulseTest: document.getElementById('btn-pulse-test'),
   winMinimize: document.getElementById('win-minimize'),
@@ -47,11 +278,26 @@ const dom = {
   promptInput: document.getElementById('prompt-input'),
   btnSend: document.getElementById('btn-send'),
   btnSimulate: document.getElementById('btn-simulate'),
+  // Build Launcher & Machine Harness Modal DOM
+  buildLauncherModal: document.getElementById('build-launcher-modal'),
+  launcherTitle: document.getElementById('launcher-title'),
+  launcherStatusPill: document.getElementById('launcher-status-pill'),
+  btnLauncherPreset: document.getElementById('btn-launcher-preset'),
+  btnLauncherSaveDisk: document.getElementById('btn-launcher-save-disk'),
+  btnLauncherNativeWin: document.getElementById('btn-launcher-native-win'),
+  btnLauncherDownload: document.getElementById('btn-launcher-download'),
+  btnLauncherClose: document.getElementById('btn-launcher-close'),
+  btnRefreshProjects: document.getElementById('btn-refresh-projects'),
+  savedProjectsList: document.getElementById('saved-projects-list'),
+  btnRerunSource: document.getElementById('btn-rerun-source'),
+  launcherSourceEditor: document.getElementById('launcher-source-editor'),
+  sandboxIframe: document.getElementById('sandbox-iframe'),
 };
 
 dom.runtimeBadge.textContent = isTauriDesktop ? 'TAURI // IPC READY' : 'WEBGL // STANDALONE';
 
 const STORAGE_KEY_PREFIX = 'calabi_yau_provider_cfg_';
+const LOCAL_PROJECTS_KEY = 'calabi_yau_saved_projects_v1';
 
 function loadProviderConfig(providerId) {
   try {
@@ -155,10 +401,6 @@ dom.btnToggleConfig.addEventListener('click', () => {
   dom.btnToggleConfig.classList.toggle('active');
 });
 
-/**
- * Queries live models from the selected provider (e.g. `https://ollama.com/api/tags` for Ollama Cloud)
- * and merges them into the model dropdown.
- */
 async function syncLiveModels() {
   const provider = getActiveProvider();
   const originalText = dom.btnSyncModels.textContent;
@@ -281,6 +523,23 @@ const calabiYau = new CalabiYauCanvas(dom.viewport, {
 
 const superscriptDigits = ['⁰', '¹', '²', '³', '⁴', '⁵', '⁶', '⁷', '⁸', '⁹'];
 
+function syncManifoldSlidersToCanvas() {
+  const n = calabiYau.exponentN;
+  const xi = calabiYau.projectionAngle;
+  const res = calabiYau.resolution;
+
+  dom.sliderExponent.value = String(n);
+  dom.valExponent.textContent = `${n} (${n * n} sheets)`;
+  const sup = superscriptDigits[n] || `^${n}`;
+  dom.manifoldEquation.textContent = `z₁${sup} + z₂${sup} = 1`;
+
+  dom.sliderPhase.value = String(xi.toFixed(4));
+  dom.valPhase.textContent = `${xi.toFixed(2)} rad`;
+
+  dom.sliderResolution.value = String(res);
+  dom.valResolution.textContent = `${res}×${res}`;
+}
+
 dom.sliderExponent.addEventListener('input', (e) => {
   const n = parseInt(e.target.value, 10);
   dom.valExponent.textContent = `${n} (${n * n} sheets)`;
@@ -332,7 +591,345 @@ if (isTauriDesktop) {
   });
 }
 
+// ============================================================================
+// BUILD LAUNCHER & NATIVE MACHINE FILESYSTEM HARNESS
+// ============================================================================
+
+let currentSandboxTitle = 'fermat-quintic-euler-05thz';
+
+/**
+ * Wraps raw GLSL or JS snippets into a runnable HTML document if the code block
+ * is not already a full HTML document.
+ */
+function ensureRunnableHtmlDocument(code, lang = 'html') {
+  const trimmed = (code || '').trim();
+  if (/<!doctype html>|<html[\s>]/i.test(trimmed)) {
+    return trimmed;
+  }
+  if (lang === 'javascript' || lang === 'js') {
+    return `<!DOCTYPE html><html><head><meta charset="UTF-8"><style>body{margin:0;background:#000;color:#0ff;font-family:monospace;}</style></head><body><script type="module">\n${trimmed}\n</script></body></html>`;
+  }
+  return DEFAULT_EULER_QUINTIC_BUILD_HTML;
+}
+
+function runCodeInSandbox(rawCode, title = 'calabi-yau-shader-build') {
+  currentSandboxTitle = title;
+  const runnableHtml = ensureRunnableHtmlDocument(rawCode);
+  dom.launcherSourceEditor.value = runnableHtml;
+  dom.sandboxIframe.srcdoc = runnableHtml;
+  dom.launcherTitle.textContent = `LIVE WEBGL BUILD // ${title.toUpperCase()}`;
+}
+
+function openBuildLauncher(codeToRun = null, title = 'fermat-quintic-euler-05thz') {
+  dom.buildLauncherModal.classList.remove('hidden');
+  const source = codeToRun || dom.launcherSourceEditor.value.trim() || DEFAULT_EULER_QUINTIC_BUILD_HTML;
+  runCodeInSandbox(source, title);
+  refreshSavedMachineProjects();
+}
+
+function closeBuildLauncher() {
+  dom.buildLauncherModal.classList.add('hidden');
+}
+
+function getLocalFallbackProjects() {
+  try {
+    const raw = localStorage.getItem(LOCAL_PROJECTS_KEY);
+    return raw ? JSON.parse(raw) : [];
+  } catch {
+    return [];
+  }
+}
+
+function saveLocalFallbackProject(entry) {
+  try {
+    const list = getLocalFallbackProjects().filter((p) => p.filename !== entry.filename);
+    list.unshift(entry);
+    localStorage.setItem(LOCAL_PROJECTS_KEY, JSON.stringify(list.slice(0, 25)));
+  } catch {
+    // Ignore quota issues
+  }
+}
+
+function triggerBrowserDownload(filename, content) {
+  const blob = new Blob([content], { type: 'text/html;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename.endsWith('.html') ? filename : `${filename}.html`;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  setTimeout(() => URL.revokeObjectURL(url), 2000);
+}
+
+/**
+ * Saves an artifact directly to `~/CalabiYauProjects` via the Tauri Rust filesystem harness,
+ * and also stores a copy in local project storage (plus optional file download in browser mode).
+ */
+async function saveArtifactToMachine(filename, content, extension = 'html') {
+  const cleanName = filename || `calabi-yau-build-${Date.now()}`;
+  if (isTauriDesktop) {
+    const info = await invoke('save_artifact_to_disk', {
+      filename: cleanName,
+      content,
+      extension,
+    });
+    saveLocalFallbackProject({
+      filename: info.filename,
+      path: info.path,
+      bytes: info.bytes,
+      content,
+    });
+    await refreshSavedMachineProjects();
+    return info;
+  } else {
+    const finalName = cleanName.endsWith(`.${extension}`)
+      ? cleanName
+      : `${cleanName}.${extension}`;
+    const virtualPath = `~/CalabiYauProjects/${finalName}`;
+    const info = {
+      filename: finalName,
+      path: virtualPath,
+      bytes: new Blob([content]).size,
+      directory: '~/CalabiYauProjects',
+    };
+    saveLocalFallbackProject({ ...info, content });
+    triggerBrowserDownload(finalName, content);
+    await refreshSavedMachineProjects();
+    return info;
+  }
+}
+
+async function spawnNativeArtifactWindow(title, htmlContent, filename) {
+  if (isTauriDesktop) {
+    const info = await invoke('launch_artifact_window', {
+      title,
+      htmlContent: ensureRunnableHtmlDocument(htmlContent),
+      filename: filename || currentSandboxTitle,
+    });
+    await refreshSavedMachineProjects();
+    return info;
+  } else {
+    openBuildLauncher(htmlContent, title);
+    return {
+      filename: `${filename || 'build'}.html`,
+      path: '~/CalabiYauProjects (Sandbox Active)',
+      bytes: htmlContent.length,
+    };
+  }
+}
+
+async function refreshSavedMachineProjects() {
+  dom.savedProjectsList.innerHTML = '';
+  let items = [];
+
+  if (isTauriDesktop) {
+    try {
+      items = await invoke('list_saved_artifacts');
+    } catch {
+      items = getLocalFallbackProjects();
+    }
+  } else {
+    items = getLocalFallbackProjects();
+  }
+
+  if (!items || items.length === 0) {
+    const empty = document.createElement('div');
+    empty.className = 'saved-project-empty';
+    empty.innerHTML =
+      'No saved builds yet. Click <code>SAVE TO MACHINE</code> on any generated shader or inside this launcher to write directly to <code>~/CalabiYauProjects/</code>.';
+    dom.savedProjectsList.appendChild(empty);
+    return;
+  }
+
+  const localCache = getLocalFallbackProjects();
+
+  for (const item of items) {
+    const card = document.createElement('div');
+    card.className = 'saved-project-item';
+
+    const topRow = document.createElement('div');
+    topRow.style.display = 'flex';
+    topRow.style.justifyContent = 'space-between';
+    topRow.style.alignItems = 'center';
+
+    const nameSpan = document.createElement('span');
+    nameSpan.style.color = '#00f3ff';
+    nameSpan.style.fontWeight = '700';
+    nameSpan.textContent = item.filename;
+
+    const sizeSpan = document.createElement('span');
+    sizeSpan.style.color = '#7b96b8';
+    sizeSpan.textContent = `${(item.bytes / 1024).toFixed(1)} KB`;
+
+    topRow.appendChild(nameSpan);
+    topRow.appendChild(sizeSpan);
+
+    const pathDiv = document.createElement('div');
+    pathDiv.className = 'project-path';
+    pathDiv.textContent = item.path;
+
+    card.appendChild(topRow);
+    card.appendChild(pathDiv);
+
+    const cached = localCache.find((c) => c.filename === item.filename);
+    if (cached && cached.content) {
+      card.style.cursor = 'pointer';
+      card.title = 'Click to load project into Live WebGL Sandbox';
+      card.addEventListener('click', () => {
+        runCodeInSandbox(cached.content, item.filename.replace(/\.html$/i, ''));
+      });
+    }
+
+    dom.savedProjectsList.appendChild(card);
+  }
+}
+
+dom.btnBuildLauncher.addEventListener('click', () => {
+  openBuildLauncher();
+});
+
+dom.btnLauncherClose.addEventListener('click', closeBuildLauncher);
+
+dom.btnLauncherPreset.addEventListener('click', () => {
+  runCodeInSandbox(DEFAULT_EULER_QUINTIC_BUILD_HTML, 'fermat-quintic-euler-05thz');
+  calabiYau.applyManifoldDirective("Euler's constant xi 0.500 THz over-saturated quintic");
+  syncManifoldSlidersToCanvas();
+});
+
+dom.btnRerunSource.addEventListener('click', () => {
+  runCodeInSandbox(dom.launcherSourceEditor.value, currentSandboxTitle);
+});
+
+dom.btnLauncherSaveDisk.addEventListener('click', async () => {
+  const content = dom.launcherSourceEditor.value.trim() || DEFAULT_EULER_QUINTIC_BUILD_HTML;
+  const info = await saveArtifactToMachine(currentSandboxTitle, content, 'html');
+  dom.launcherStatusPill.textContent = `SAVED: ${info.path}`;
+});
+
+dom.btnLauncherNativeWin.addEventListener('click', async () => {
+  const content = dom.launcherSourceEditor.value.trim() || DEFAULT_EULER_QUINTIC_BUILD_HTML;
+  const info = await spawnNativeArtifactWindow(
+    `Calabi-Yau Build // ${currentSandboxTitle}`,
+    content,
+    currentSandboxTitle
+  );
+  dom.launcherStatusPill.textContent = `LAUNCHED: ${info.filename}`;
+});
+
+dom.btnLauncherDownload.addEventListener('click', () => {
+  const content = dom.launcherSourceEditor.value.trim() || DEFAULT_EULER_QUINTIC_BUILD_HTML;
+  triggerBrowserDownload(`${currentSandboxTitle}.html`, content);
+});
+
+dom.btnRefreshProjects.addEventListener('click', refreshSavedMachineProjects);
+
+window.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape' && !dom.buildLauncherModal.classList.contains('hidden')) {
+    closeBuildLauncher();
+  }
+});
+
+/**
+ * Extracts fenced markdown code blocks (```html ... ```, ```glsl ... ```, etc.)
+ * from a completed assistant message and attaches an interactive Build Launcher &
+ * Machine Harness toolbar below the message.
+ */
+function attachArtifactHarnessIfCodePresent(articleEl, fullText, promptContext = '') {
+  const codeFenceRegex = /```([a-zA-Z0-9_-]*)\s*\n([\s\S]*?)```/g;
+  const matches = [];
+  let match;
+  while ((match = codeFenceRegex.exec(fullText)) !== null) {
+    const lang = (match[1] || 'html').toLowerCase();
+    const code = match[2].trim();
+    if (code.length > 40) {
+      matches.push({ lang, code });
+    }
+  }
+
+  if (matches.length === 0) return;
+
+  matches.forEach((artifact, idx) => {
+    const card = document.createElement('div');
+    card.className = 'artifact-harness-card';
+
+    const header = document.createElement('div');
+    header.className = 'artifact-harness-header';
+    const artifactSlug = `fermat-quintic-build-${idx + 1}`;
+    header.innerHTML = `<span>EXECUTABLE ARTIFACT #${idx + 1} // ${artifact.lang.toUpperCase()} (${(
+      artifact.code.length / 1024
+    ).toFixed(1)} KB)</span><span>HARNESS READY</span>`;
+
+    const actions = document.createElement('div');
+    actions.className = 'artifact-harness-actions';
+
+    const statusLine = document.createElement('div');
+    statusLine.className = 'artifact-status-line';
+    statusLine.textContent = 'Ready to launch in WebGL sandbox or save to ~/CalabiYauProjects/';
+
+    const btnLaunch = document.createElement('button');
+    btnLaunch.type = 'button';
+    btnLaunch.className = 'artifact-btn launch';
+    btnLaunch.textContent = 'LAUNCH BUILD (LIVE WEBGL)';
+    btnLaunch.addEventListener('click', () => {
+      openBuildLauncher(artifact.code, artifactSlug);
+      statusLine.textContent = 'Launched inside Live WebGL Sandbox Runner.';
+    });
+
+    const btnSaveDisk = document.createElement('button');
+    btnSaveDisk.type = 'button';
+    btnSaveDisk.className = 'artifact-btn';
+    btnSaveDisk.textContent = 'SAVE TO MACHINE (~/CalabiYauProjects)';
+    btnSaveDisk.addEventListener('click', async () => {
+      const ext = artifact.lang === 'glsl' ? 'glsl' : 'html';
+      const info = await saveArtifactToMachine(artifactSlug, artifact.code, ext);
+      statusLine.textContent = `Saved to machine: ${info.path} (${info.bytes} bytes)`;
+    });
+
+    const btnNativeWin = document.createElement('button');
+    btnNativeWin.type = 'button';
+    btnNativeWin.className = 'artifact-btn';
+    btnNativeWin.textContent = 'SPAWN NATIVE WINDOW';
+    btnNativeWin.addEventListener('click', async () => {
+      const info = await spawnNativeArtifactWindow(
+        `Calabi-Yau Build #${idx + 1}`,
+        artifact.code,
+        artifactSlug
+      );
+      statusLine.textContent = `Spawned native window & saved: ${info.path}`;
+    });
+
+    const btnApplyManifold = document.createElement('button');
+    btnApplyManifold.type = 'button';
+    btnApplyManifold.className = 'artifact-btn manifold';
+    btnApplyManifold.textContent = 'APPLY DIRECTIVE TO 6D MANIFOLD';
+    btnApplyManifold.addEventListener('click', () => {
+      const summary = calabiYau.applyManifoldDirective(`${promptContext}\n${artifact.code}`);
+      syncManifoldSlidersToCanvas();
+      statusLine.textContent = `Applied to main viewport: ${summary}`;
+    });
+
+    actions.appendChild(btnLaunch);
+    actions.appendChild(btnSaveDisk);
+    actions.appendChild(btnNativeWin);
+    actions.appendChild(btnApplyManifold);
+
+    card.appendChild(header);
+    card.appendChild(actions);
+    card.appendChild(statusLine);
+    articleEl.appendChild(card);
+  });
+
+  dom.chatMessages.scrollTop = dom.chatMessages.scrollHeight;
+}
+
+// ============================================================================
+// CHAT STREAMING & REASONING TRACE SEPARATION
+// ============================================================================
+
 let activeAssistantBubble = null;
+let activeThinkingBody = null;
+let activeThinkingDrawer = null;
 let activeMetricBadge = null;
 let isGenerating = false;
 
@@ -361,20 +958,50 @@ function createChatBubble(role, initialText = '', badgeText = '') {
 
   meta.appendChild(roleSpan);
   meta.appendChild(metricSpan);
+  article.appendChild(meta);
+
+  let thinkingDrawer = null;
+  let thinkingBody = null;
+
+  if (role === 'assistant') {
+    thinkingDrawer = document.createElement('details');
+    thinkingDrawer.className = 'thinking-drawer';
+    thinkingDrawer.style.display = 'none';
+
+    const summary = document.createElement('summary');
+    summary.className = 'thinking-summary';
+    summary.innerHTML =
+      '<span>QUANTUM REASONING TRACE (INTERNAL MODEL THINKING)</span><span>[EXPAND / COLLAPSE]</span>';
+
+    thinkingBody = document.createElement('div');
+    thinkingBody.className = 'thinking-body';
+
+    thinkingDrawer.appendChild(summary);
+    thinkingDrawer.appendChild(thinkingBody);
+    article.appendChild(thinkingDrawer);
+  }
 
   const content = document.createElement('div');
   content.className = 'msg-content';
   content.textContent = initialText;
 
-  article.appendChild(meta);
   article.appendChild(content);
   dom.chatMessages.appendChild(article);
   dom.chatMessages.scrollTop = dom.chatMessages.scrollHeight;
 
-  return { article, content, metricSpan };
+  return { article, content, metricSpan, thinkingDrawer, thinkingBody };
 }
 
 if (isTauriDesktop) {
+  listen('thinking-received', (event) => {
+    const token = typeof event.payload === 'string' ? event.payload : '';
+    if (activeThinkingBody && activeThinkingDrawer && token) {
+      activeThinkingDrawer.style.display = 'block';
+      activeThinkingBody.textContent += token;
+      recordTokenTimestamp();
+    }
+  });
+
   listen('token-received', (event) => {
     const token =
       typeof event.payload === 'string' ? event.payload : event.payload?.response || '';
@@ -390,43 +1017,66 @@ if (isTauriDesktop) {
     if (activeMetricBadge && Number.isFinite(metric)) {
       activeMetricBadge.textContent = `ω = ${metric.toFixed(3)} THz`;
     }
+    if (Number.isFinite(metric)) {
+      calabiYau.triggerQuantumPulse(metric, 'Ψ');
+    }
   });
 }
 
 /**
- * Extracts a token from any provider JSON chunk in browser-standalone mode.
+ * Extracts a token from any provider JSON chunk in browser-standalone mode,
+ * distinguishing internal reasoning (`isThinking: true`) from final output.
  */
 function extractBrowserStreamToken(parsed) {
-  if (typeof parsed.response === 'string' && parsed.response) return parsed.response;
-  if (parsed.message?.content) return parsed.message.content;
-  if (parsed.message?.thinking) return parsed.message.thinking;
-  if (parsed.choices?.[0]?.delta?.content) return parsed.choices[0].delta.content;
-  if (parsed.choices?.[0]?.delta?.reasoning_content) return parsed.choices[0].delta.reasoning_content;
-  if (parsed.delta?.text) return parsed.delta.text;
-  if (parsed.candidates?.[0]?.content?.parts?.[0]?.text) {
-    return parsed.candidates[0].content.parts[0].text;
+  if (typeof parsed.response === 'string' && parsed.response) {
+    return { token: parsed.response, isThinking: false };
   }
-  return '';
+  if (parsed.message?.content) {
+    return { token: parsed.message.content, isThinking: false };
+  }
+  if (parsed.message?.thinking) {
+    return { token: parsed.message.thinking, isThinking: true };
+  }
+  if (parsed.choices?.[0]?.delta?.content) {
+    return { token: parsed.choices[0].delta.content, isThinking: false };
+  }
+  if (parsed.choices?.[0]?.delta?.reasoning_content) {
+    return { token: parsed.choices[0].delta.reasoning_content, isThinking: true };
+  }
+  if (parsed.delta?.text) {
+    return { token: parsed.delta.text, isThinking: false };
+  }
+  if (parsed.candidates?.[0]?.content?.parts?.[0]?.text) {
+    return { token: parsed.candidates[0].content.parts[0].text, isThinking: false };
+  }
+  return { token: '', isThinking: false };
 }
 
 /**
- * Streams a simulated Calabi-Yau theoretical physics response when no API key is configured
- * or when the user clicks the SIMULATE button, driving real-time WebGL string vibrations.
+ * Streams a simulated Calabi-Yau theoretical physics + executable WebGL shader response
+ * when no API key is configured or when the user clicks SIMULATE.
  */
-async function runSimulatedQuantumStream(promptText, provider, modelSlug, targetContentEl, targetMetricEl) {
-  const responseParagraph =
-    `[${provider.badge} :: ${modelSlug}] In compactified Type IIB superstring theory, the Fermat quintic ` +
-    `Calabi-Yau threefold M₅ ⊂ ℂℙ⁴ defined by ∑ zᵢ⁵ = 0 exhibits vanishing first Chern class c₁(TM) = 0 ` +
-    `and Euler characteristic χ = −200 (h¹¹ = 1, h²¹ = 101). Regarding "${promptText.slice(0, 64)}": ` +
-    `each token streamed from ${modelSlug} perturbs the Kähler moduli space and excites quantized ` +
-    `closed-string vibrational harmonics across the 25 Riemann sheets.`;
+async function runSimulatedQuantumStream(
+  promptText,
+  provider,
+  modelSlug,
+  targetContentEl,
+  targetMetricEl
+) {
+  const wantsShaderOrRender = /render|shader|wireframe|euler|quintic|simplex|thz|html|webgl/i.test(
+    promptText
+  );
 
-  const tokens = responseParagraph.match(/\S+\s*/g) || [responseParagraph];
+  const responseParagraph = wantsShaderOrRender
+    ? `[${provider.badge} :: ${modelSlug}] Locking Fermat quintic threefold M₅ ⊂ ℂℙ⁴ (∑ zᵢ⁵ = 0) to Euler's constant ξ = e ≈ 2.71828 rad with a 0.500 THz Simplex Noise burst envelope. Below is the executable Three.js / GLSL holographic wireframe build:\n\n\`\`\`html\n${DEFAULT_EULER_QUINTIC_BUILD_HTML}\n\`\`\``
+    : `[${provider.badge} :: ${modelSlug}] In compactified Type IIB superstring theory, the Fermat quintic Calabi-Yau threefold M₅ ⊂ ℂℙ⁴ defined by ∑ zᵢ⁵ = 0 exhibits vanishing first Chern class c₁(TM) = 0 and Euler characteristic χ = −200 (h¹¹ = 1, h²¹ = 101). Regarding "${promptText.slice(0, 64)}": each token streamed from ${modelSlug} perturbs the Kähler moduli space and excites quantized closed-string vibrational harmonics across the 25 Riemann sheets.`;
+
+  const tokens = responseParagraph.match(/[\s\S]{1,18}/g) || [responseParagraph];
   let lastTick = performance.now();
 
   for (let i = 0; i < tokens.length; i++) {
     const token = tokens[i];
-    const delayMs = 20 + Math.random() * 35;
+    const delayMs = wantsShaderOrRender ? 8 : 22 + Math.random() * 25;
     await new Promise((resolve) => setTimeout(resolve, delayMs));
 
     const now = performance.now();
@@ -436,7 +1086,10 @@ async function runSimulatedQuantumStream(promptText, provider, modelSlug, target
     const instantTps = Math.min(120, 1.0 / dtSecs);
     const metric = Math.min(
       3.5,
-      Math.max(0.15, (instantTps / 38) * (token.length / 5.2) * (0.85 + 0.35 * Math.sin(i * 0.45)))
+      Math.max(
+        0.15,
+        (instantTps / 38) * (token.length / 5.2) * (0.85 + 0.35 * Math.sin(i * 0.45))
+      )
     );
 
     targetContentEl.textContent += token;
@@ -458,17 +1111,30 @@ async function handlePromptSubmission(forceSimulation = false) {
   const customEndpoint = dom.endpointInput.value.trim();
 
   const effectivePrompt =
-    prompt || `Analyze the Ricci-flat metric spectrum of the quintic Calabi-Yau manifold using ${modelSlug}.`;
+    prompt ||
+    `Render a highly unstable, multi-sheeted projection of the Fermat quintic threefold topology. Force the vertex shader to map Euler's constant to the phase angle xi, and scale the continuous Simplex Noise amplitude based on an artificial 0.500 THz inference burst.`;
   dom.promptInput.value = '';
+
+  // Automatically apply any mathematical/shader directives in the user's prompt to the live 3D manifold
+  if (/euler|quintic|thz|oversaturat|over-saturat|unstable|sheet/i.test(effectivePrompt)) {
+    calabiYau.applyManifoldDirective(effectivePrompt);
+    syncManifoldSlidersToCanvas();
+  }
 
   isGenerating = true;
   dom.btnSend.disabled = true;
   dom.btnSimulate.disabled = true;
 
   createChatBubble('user', effectivePrompt, `${provider.badge} // TX`);
-  const { content, metricSpan } = createChatBubble('assistant', '', 'STREAMING...');
+  const { article, content, metricSpan, thinkingDrawer, thinkingBody } = createChatBubble(
+    'assistant',
+    '',
+    'STREAMING...'
+  );
   content.classList.add('streaming-cursor');
   activeAssistantBubble = content;
+  activeThinkingDrawer = thinkingDrawer;
+  activeThinkingBody = thinkingBody;
   activeMetricBadge = metricSpan;
 
   try {
@@ -535,14 +1201,19 @@ async function handlePromptSubmission(forceSimulation = false) {
           if (!jsonStr || jsonStr === '[DONE]') continue;
 
           const parsed = JSON.parse(jsonStr);
-          const tokenPiece = extractBrowserStreamToken(parsed);
+          const { token: tokenPiece, isThinking } = extractBrowserStreamToken(parsed);
           if (tokenPiece) {
             const now = performance.now();
             const dt = Math.max(0.002, (now - lastTime) / 1000);
             lastTime = now;
 
             const metric = Math.min(3.5, (1.0 / dt / 42.0) * (tokenPiece.length / 5.0));
-            content.textContent += tokenPiece;
+            if (isThinking && thinkingDrawer && thinkingBody) {
+              thinkingDrawer.style.display = 'block';
+              thinkingBody.textContent += tokenPiece;
+            } else {
+              content.textContent += tokenPiece;
+            }
             metricSpan.textContent = `ω = ${metric.toFixed(3)} THz`;
             recordTokenTimestamp();
             calabiYau.triggerQuantumPulse(metric, tokenPiece);
@@ -562,7 +1233,10 @@ async function handlePromptSubmission(forceSimulation = false) {
     await runSimulatedQuantumStream(effectivePrompt, provider, modelSlug, content, metricSpan);
   } finally {
     content.classList.remove('streaming-cursor');
+    attachArtifactHarnessIfCodePresent(article, content.textContent, effectivePrompt);
     activeAssistantBubble = null;
+    activeThinkingDrawer = null;
+    activeThinkingBody = null;
     activeMetricBadge = null;
     isGenerating = false;
     dom.btnSend.disabled = false;
