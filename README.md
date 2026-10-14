@@ -1,5 +1,7 @@
 # Calabi-Yau AI Platform (v0.3.0)
 
+<img width="1376" height="768" alt="image" src="https://github.com/user-attachments/assets/6f60a260-703c-48b7-ad7d-91bcc959fbdf" />
+
 A borderless, cyberpunk desktop overlay built with **Rust + Tauri**, **Three.js / WebGL**, a **Live WebGL Build Launcher & Native Machine Filesystem Harness (`~/CalabiYauProjects/`)**, and a **Universal Multi-Provider Quantum LLM Bridge** supporting **Ollama Cloud (`https://ollama.com/api/chat`)**, **17 additional Frontier Cloud AI Providers**, and **Ollama Local (`http://localhost:11434`)**.
 
 It streams tokens in real time, separates model reasoning traces (`message.thinking`) into a collapsible drawer, extracts executable HTML/Three.js/GLSL code blocks so you can launch them in a live WebGL sandbox or save them directly to your machine, and translates instantaneous generation velocity ($\text{tokens/s}$) into higher-dimensional **Calabi-Yau quintic threefold** ($z_1^n + z_2^n = 1 \subset \mathbb{CP}^4$) string vibrations.
