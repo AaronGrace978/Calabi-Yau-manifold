@@ -7,9 +7,9 @@ on:
   workflow_dispatch:
     inputs:
       tag_name:
-        description: 'Release tag version (e.g. v0.3.0)'
+        description: 'Release tag version (e.g. v0.4.0)'
         required: false
-        default: 'v0.3.0'
+        default: 'v0.4.0'
 
 permissions:
   contents: write
@@ -48,7 +48,7 @@ jobs:
           elif [[ -n "${{ inputs.tag_name }}" ]]; then
             echo "tag=${{ inputs.tag_name }}" >> "$GITHUB_OUTPUT"
           else
-            echo "tag=v0.3.0" >> "$GITHUB_OUTPUT"
+            echo "tag=v0.4.0" >> "$GITHUB_OUTPUT"
           fi
 
       - name: Install Linux system dependencies (GTK3 / WebKit2GTK / AppIndicator)
@@ -82,8 +82,15 @@ jobs:
       - name: Install frontend dependencies
         run: npm ci
 
+      - name: Run spectral instrument unit tests
+        run: npm test
+
       - name: Verify frontend production bundle
         run: npm run build
+
+      - name: Run Rust stream protocol unit tests
+        if: matrix.platform == 'ubuntu-22.04'
+        run: cargo test --manifest-path src-tauri/Cargo.toml
 
       - name: Build and publish Tauri desktop bundles
         uses: tauri-apps/tauri-action@v0
@@ -93,14 +100,18 @@ jobs:
           tagName: ${{ steps.meta.outputs.tag }}
           releaseName: "Calabi-Yau AI Platform ${{ steps.meta.outputs.tag }}"
           releaseBody: |
-            ## Calabi-Yau AI Platform ${{ steps.meta.outputs.tag }} — Live WebGL Build Launcher & Native Machine Harness Release
+            ## Calabi-Yau AI Platform ${{ steps.meta.outputs.tag }}: Spectral Inference Instrument
 
-            Higher-dimensional **Calabi-Yau Quintic Threefold** ($\mathbb{CP}^4$) WebGL visualizer and borderless cyberpunk overlay featuring:
-            - **Live WebGL Build Launcher & Sandbox Runner**: Automatically detects generated HTML / Three.js / GLSL shaders in model responses and runs them in a live sandboxed WebGL viewport or spawns a dedicated native OS window (`launch_artifact_window`).
-            - **Native Rust Machine Filesystem Harness**: Saves generated projects and shaders directly to `~/CalabiYauProjects/` on your machine (`save_artifact_to_disk`, `list_saved_artifacts`) without requiring an external harness.
-            - **Quantum Reasoning Trace Separation**: Separates internal chain-of-thought (`message.thinking` / `reasoning_content` from models like `deepseek-v4.1-flash`) into a collapsible reasoning drawer while keeping final output and executable code blocks clean.
-            - **Direct 6D Manifold Directive Locking**: Prompts or shader directives specifying Euler's constant ($\xi = e \approx 2.71828\text{ rad}$), $0.500\text{ THz}$ Simplex burst envelopes, or Fermat degree $n$ immediately lock onto the main 3D Calabi-Yau viewport.
-            - **19 Cloud & Local AI Providers**: **Ollama Cloud (`https://ollama.com/api/chat`)** plus **18 Frontier AI Providers** and their newest 2026 models.
+            The manifold is now driven by a defined function of the live token stream instead of a heuristic pulse, and that function also runs in reverse.
+
+            - **Spectral signature of the stream**: log inter-token interval and novelty-weighted information density each go through a 32-token Hann-windowed DFT and are split into *n* bands. Their outer product sets the energy of the *n²* sheets of z₁ⁿ + z₂ⁿ = 1 (rows are timing modes, columns are content modes). Per-sheet energy drives displacement and glow on both the GPU and CPU paths.
+            - **Generation fingerprints**: every completed run stores a 7×7 sheet spectrum, summary statistics (TTFT, median Δt, entropy, repetition, thinking ratio, spectral centroids/flatness), and a 64-point reference trajectory. Runs are compared with Jensen–Shannon distance, a statistics distance, and discrete Fréchet distance. Fingerprints can be exported as JSON.
+            - **Regime detection**: repetition loops, mode collapse, tool/JSON storms, throughput bursts, stalls, reasoning→answer phase changes, and spectral regime shifts, with hysteresis.
+            - **Trajectory geometry**: each token is lifted onto the same complex-power construction (entropy and n-gram projection set *a*, timing sets *b*, the dominant timing × content mode sets the sheet). The path is drawn on the surface and measured in R⁴: arc length, turning angle, winding number of arg z₁, and sheet transitions.
+            - **Invertible control surface**: click a sheet to set a target. The content axis maps to temperature / top-p (open loop, or closed loop with an integral bias calibrated from measured runs). Repetition events raise the repetition penalty. The timing axis and target amplitude are actuated by routing to the provider/model whose stored fingerprints sit closest to the target.
+            - **Multi-model interference**: SWARM LANES streams one prompt to up to six provider/model lanes in parallel. Each lane is superposed on the shared sheets in its own color, with live power shares, pairwise Bhattacharyya overlap, coherence, and takeover events.
+            - **11-D instrument state**: x, y, z, ξ, σ (sheet), amplitude, frequency, saturation, timing centroid, content centroid, and content flatness. Every dimension is a documented function of the stream, and the vector can be copied as JSON.
+            - **Rust bridge**: run-scoped `inference-frame` / `inference-done` events with Rust-side arrival timestamps, per-request sampling parameters for every provider family, and unit-tested stream parsing and payload construction.
 
             ### Supported Providers & 2026 Frontier Models
             - **Ollama Cloud (`ollama.com`)**: `deepseek-v4.1-flash`, `deepseek-v4-pro:0813`, `mistral-large-4`, `kimi-k3`, `kimi-k2.7-code`, `glm-5.3`, `glm-5.3-flash`, `qwen3.5:397b`, `gemma4:31b`, `minimax-m3`, `nemotron-3-ultra`, `gpt-oss:120b` + live `/api/tags` sync

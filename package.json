@@ -1,14 +1,15 @@
 {
   "name": "calabi-yau-ai-platform",
   "private": true,
-  "version": "0.3.0",
-  "description": "Calabi-Yau AI Platform: Higher-dimensional WebGL manifold overlay for local Ollama LLM inference",
+  "version": "0.4.0",
+  "description": "Calabi-Yau AI Platform: a spectral instrument that maps live LLM token streams onto the sheets of a Fermat Calabi-Yau surface",
   "type": "module",
   "scripts": {
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview",
-    "tauri": "tauri"
+    "tauri": "tauri",
+    "test": "node --test tests/*.test.js"
   },
   "dependencies": {
     "@tauri-apps/api": "^1.6.0",
