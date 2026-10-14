@@ -3,35 +3,21 @@
     windows_subsystem = "windows"
 )]
 
+mod stream;
+
 use futures_util::StreamExt;
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
-use serde_json::{json, Value};
+use serde_json::Value;
+use stream::{
+    build_payload, extract_token_from_json, parse_stream_line, InferenceDone, InferenceFrame,
+    SamplingParams,
+};
 use std::env;
 use std::fs;
 use std::path::PathBuf;
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
 use tauri::{AppHandle, Window, WindowBuilder, WindowUrl};
-
-/// Calculates a normalized quantum string vibration frequency metric in the range [0.08, 5.0]
-/// derived from instantaneous token generation velocity (tokens/sec), token byte entropy,
-/// and harmonic phase oscillation.
-fn compute_quantum_metric(token: &str, elapsed_secs: f64, sequence_idx: u64) -> f64 {
-    let safe_dt = elapsed_secs.max(0.0015);
-    let instant_tps = (1.0 / safe_dt).clamp(1.0, 160.0);
-
-    let char_count = token.chars().count() as f64;
-    let byte_entropy: f64 = token
-        .bytes()
-        .fold(0u64, |acc, b| acc.wrapping_add(b as u64)) as f64;
-    let spectral_mod = ((byte_entropy * 0.073 + sequence_idx as f64 * 0.41).sin() + 1.0) * 0.5;
-
-    let velocity_component = (instant_tps / 45.0).powf(0.85);
-    let length_component = (char_count / 6.0).clamp(0.15, 2.2);
-    let harmonic_component = 0.75 + 0.5 * spectral_mod;
-
-    (velocity_component * length_component * harmonic_component).clamp(0.08, 5.0)
-}
 
 /// Resolves an API key from explicit user input or standard provider environment variables.
 fn resolve_api_key(provider_id: &str, provided_key: Option<String>) -> Option<String> {
@@ -108,106 +94,6 @@ fn default_endpoint_for_provider(provider_id: &str, model: &str) -> String {
         "meta" => "https://api.llama.com/compat/v1/chat/completions".to_string(),
         _ => "https://ollama.com/api/chat".to_string(),
     }
-}
-
-/// Extracts a token snippet from any supported streaming JSON frame.
-/// Separates `thinking` tokens from `content` tokens so reasoning traces don't pollute code blocks
-/// unless `content` is empty.
-fn extract_token_from_json(val: &Value) -> (String, bool, bool) {
-    let mut is_done = val.get("done").and_then(|d| d.as_bool()).unwrap_or(false);
-
-    if let Some(event_type) = val.get("type").and_then(|t| t.as_str()) {
-        if event_type == "message_stop" {
-            is_done = true;
-        }
-    }
-
-    // 1. Ollama `/api/generate` format
-    if let Some(resp) = val.get("response").and_then(|r| r.as_str()) {
-        if !resp.is_empty() {
-            return (resp.to_string(), false, is_done);
-        }
-    }
-
-    // 2. Ollama `/api/chat` format (`message.content` or `message.thinking`)
-    if let Some(msg) = val.get("message") {
-        if let Some(content) = msg.get("content").and_then(|c| c.as_str()) {
-            if !content.is_empty() {
-                return (content.to_string(), false, is_done);
-            }
-        }
-        if let Some(thinking) = msg.get("thinking").and_then(|t| t.as_str()) {
-            if !thinking.is_empty() {
-                return (thinking.to_string(), true, is_done);
-            }
-        }
-    }
-
-    // 3. OpenAI-compatible SSE format (`choices[0].delta.content` / `reasoning_content`)
-    if let Some(choices) = val.get("choices").and_then(|c| c.as_array()) {
-        if let Some(first) = choices.first() {
-            if first
-                .get("finish_reason")
-                .and_then(|f| f.as_str())
-                .is_some()
-            {
-                is_done = true;
-            }
-            if let Some(delta) = first.get("delta") {
-                if let Some(content) = delta.get("content").and_then(|c| c.as_str()) {
-                    if !content.is_empty() {
-                        return (content.to_string(), false, is_done);
-                    }
-                }
-                if let Some(reasoning) = delta
-                    .get("reasoning_content")
-                    .or_else(|| delta.get("reasoning"))
-                    .and_then(|r| r.as_str())
-                {
-                    if !reasoning.is_empty() {
-                        return (reasoning.to_string(), true, is_done);
-                    }
-                }
-            }
-        }
-    }
-
-    // 4. Anthropic Messages SSE format (`delta.text` / `delta.thinking`)
-    if let Some(delta) = val.get("delta") {
-        if let Some(text) = delta.get("text").and_then(|t| t.as_str()) {
-            if !text.is_empty() {
-                return (text.to_string(), false, is_done);
-            }
-        }
-        if let Some(thinking) = delta.get("thinking").and_then(|t| t.as_str()) {
-            if !thinking.is_empty() {
-                return (thinking.to_string(), true, is_done);
-            }
-        }
-    }
-
-    // 5. Google Gemini SSE format (`candidates[0].content.parts[0].text`)
-    if let Some(candidates) = val.get("candidates").and_then(|c| c.as_array()) {
-        if let Some(first) = candidates.first() {
-            if let Some(parts) = first
-                .get("content")
-                .and_then(|c| c.get("parts"))
-                .and_then(|p| p.as_array())
-            {
-                let mut combined = String::new();
-                for part in parts {
-                    if let Some(t) = part.get("text").and_then(|t| t.as_str()) {
-                        combined.push_str(t);
-                    }
-                }
-                if !combined.is_empty() {
-                    return (combined, false, is_done);
-                }
-            }
-        }
-    }
-
-    (String::new(), false, is_done)
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -453,7 +339,31 @@ fn urlencoding_encode(input: &str) -> String {
     out
 }
 
+fn emit_frame(
+    window: &Window,
+    run_id: &str,
+    index: &mut u64,
+    started: Instant,
+    token: String,
+    thinking: bool,
+) -> Result<(), String> {
+    let frame = InferenceFrame {
+        run_id: run_id.to_string(),
+        index: *index,
+        token,
+        thinking,
+        t_ms: started.elapsed().as_secs_f64() * 1000.0,
+    };
+    *index += 1;
+    window
+        .emit("inference-frame", frame)
+        .map_err(|e| format!("Failed to emit inference-frame event: {e}"))
+}
+
+/// Streams a completion from the selected provider, emitting one `inference-frame` per token
+/// (scoped by `run_id` so several runs can stream concurrently) and a final `inference-done`.
 #[tauri::command]
+#[allow(clippy::too_many_arguments)]
 async fn generate_calabi_yau_response(
     window: Window,
     prompt: String,
@@ -461,7 +371,54 @@ async fn generate_calabi_yau_response(
     model: Option<String>,
     api_key: Option<String>,
     endpoint: Option<String>,
+    run_id: Option<String>,
+    sampling: Option<SamplingParams>,
 ) -> Result<String, String> {
+    let run_id = run_id
+        .filter(|r| !r.trim().is_empty())
+        .unwrap_or_else(|| "default".to_string());
+    let started = Instant::now();
+    let result = stream_completion(
+        &window,
+        &run_id,
+        started,
+        prompt,
+        provider,
+        model,
+        api_key,
+        endpoint,
+        sampling.unwrap_or_default(),
+    )
+    .await;
+
+    let (tokens, error) = match &result {
+        Ok((_, n)) => (*n, None),
+        Err(e) => (0, Some(e.clone())),
+    };
+    let _ = window.emit(
+        "inference-done",
+        InferenceDone {
+            run_id: run_id.clone(),
+            tokens,
+            t_ms: started.elapsed().as_secs_f64() * 1000.0,
+            error,
+        },
+    );
+    result.map(|(text, _)| text)
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn stream_completion(
+    window: &Window,
+    run_id: &str,
+    started: Instant,
+    prompt: String,
+    provider: Option<String>,
+    model: Option<String>,
+    api_key: Option<String>,
+    endpoint: Option<String>,
+    sampling: SamplingParams,
+) -> Result<(String, u64), String> {
     let provider_id = provider
         .as_deref()
         .map(|s| s.trim().to_lowercase())
@@ -472,7 +429,8 @@ async fn generate_calabi_yau_response(
         .as_deref()
         .map(|m| m.trim())
         .filter(|m| !m.is_empty())
-        .unwrap_or("deepseek-v4.1-flash");
+        .unwrap_or("deepseek-v4.1-flash")
+        .to_string();
 
     let resolved_key = resolve_api_key(&provider_id, api_key);
 
@@ -481,7 +439,7 @@ async fn generate_calabi_yau_response(
         .map(|u| u.trim())
         .filter(|u| !u.is_empty())
         .map(|u| u.to_string())
-        .unwrap_or_else(|| default_endpoint_for_provider(&provider_id, selected_model));
+        .unwrap_or_else(|| default_endpoint_for_provider(&provider_id, &selected_model));
 
     let client = Client::builder()
         .no_proxy()
@@ -489,28 +447,7 @@ async fn generate_calabi_yau_response(
         .map_err(|e| format!("Failed to initialize HTTP client: {e}"))?;
 
     let mut req = client.post(&api_url);
-
-    let payload: Value = match provider_id.as_str() {
-        "ollama-cloud" | "ollama-local" => {
-            if let Some(ref key) = resolved_key {
-                req = req.bearer_auth(key);
-            }
-            if api_url.ends_with("/api/generate") {
-                json!({
-                    "model": selected_model,
-                    "prompt": prompt,
-                    "stream": true,
-                    "options": { "temperature": 0.7, "top_p": 0.9 }
-                })
-            } else {
-                json!({
-                    "model": selected_model,
-                    "messages": [{ "role": "user", "content": prompt }],
-                    "stream": true,
-                    "options": { "temperature": 0.7, "top_p": 0.9 }
-                })
-            }
-        }
+    match provider_id.as_str() {
         "anthropic" => {
             let key = resolved_key.ok_or_else(|| {
                 "Anthropic API key required (set in UI or ANTHROPIC_API_KEY)".to_string()
@@ -518,27 +455,12 @@ async fn generate_calabi_yau_response(
             req = req
                 .header("x-api-key", key)
                 .header("anthropic-version", "2023-06-01");
-            json!({
-                "model": selected_model,
-                "max_tokens": 4096,
-                "stream": true,
-                "messages": [{ "role": "user", "content": prompt }]
-            })
         }
         "google" | "gemini" => {
             let key = resolved_key.ok_or_else(|| {
                 "Google Gemini API key required (set in UI or GEMINI_API_KEY)".to_string()
             })?;
             req = req.header("x-goog-api-key", key);
-            json!({
-                "contents": [{
-                    "role": "user",
-                    "parts": [{ "text": prompt }]
-                }],
-                "generationConfig": {
-                    "temperature": 0.7
-                }
-            })
         }
         _ => {
             if let Some(ref key) = resolved_key {
@@ -549,14 +471,10 @@ async fn generate_calabi_yau_response(
                     .header("HTTP-Referer", "https://github.com/AaronGrace978/Calabi-Yau-manifold")
                     .header("X-Title", "Calabi-Yau AI Platform");
             }
-            json!({
-                "model": selected_model,
-                "messages": [{ "role": "user", "content": prompt }],
-                "stream": true,
-                "temperature": 0.7
-            })
         }
-    };
+    }
+
+    let payload = build_payload(&provider_id, &selected_model, &prompt, &api_url, sampling);
 
     let response = req.json(&payload).send().await.map_err(|e| {
         format!("Failed to connect to {provider_id} endpoint ({api_url}): {e}")
@@ -573,93 +491,42 @@ async fn generate_calabi_yau_response(
     let mut byte_stream = response.bytes_stream();
     let mut line_buffer = String::new();
     let mut full_output = String::new();
-    let mut last_token_instant = Instant::now();
-    let mut token_index: u64 = 0;
+    let mut index: u64 = 0;
 
-    while let Some(chunk_result) = byte_stream.next().await {
-        let bytes = chunk_result.map_err(|e| format!("Stream read error: {e}"))?;
-        let chunk_str = String::from_utf8_lossy(&bytes);
-        line_buffer.push_str(&chunk_str);
+    loop {
+        let chunk = byte_stream.next().await;
+        let at_end = chunk.is_none();
+        if let Some(chunk_result) = chunk {
+            let bytes = chunk_result.map_err(|e| format!("Stream read error: {e}"))?;
+            line_buffer.push_str(&String::from_utf8_lossy(&bytes));
+        } else if !line_buffer.ends_with('\n') {
+            line_buffer.push('\n');
+        }
 
         while let Some(newline_pos) = line_buffer.find('\n') {
             let raw_line: String = line_buffer.drain(..=newline_pos).collect();
-            let trimmed = raw_line.trim();
-            if trimmed.is_empty() || trimmed.starts_with(':') || trimmed.starts_with("event:") {
-                continue;
-            }
-
-            let json_payload = if let Some(stripped) = trimmed.strip_prefix("data:") {
-                stripped.trim()
-            } else {
-                trimmed
+            let parsed = match parse_stream_line(&raw_line) {
+                None => continue,
+                Some(Err(())) => return Ok((full_output, index)),
+                Some(Ok(v)) => v,
             };
 
-            if json_payload == "[DONE]" || json_payload.is_empty() {
-                let _ = window.emit("quantum-metric", 0.15_f64);
-                return Ok(full_output);
-            }
-
-            let Ok(parsed_val) = serde_json::from_str::<Value>(json_payload) else {
-                continue;
-            };
-
-            let (token_piece, is_thinking, is_done) = extract_token_from_json(&parsed_val);
-
+            let (token_piece, is_thinking, is_done) = extract_token_from_json(&parsed);
             if !token_piece.is_empty() {
-                let now = Instant::now();
-                let dt = now.duration_since(last_token_instant).as_secs_f64();
-                last_token_instant = now;
-                token_index += 1;
-
-                let quantum_metric = compute_quantum_metric(&token_piece, dt, token_index);
-
-                if is_thinking {
-                    let _ = window.emit("thinking-received", &token_piece);
-                } else {
+                if !is_thinking {
                     full_output.push_str(&token_piece);
-                    window
-                        .emit("token-received", &token_piece)
-                        .map_err(|e| format!("Failed to emit token-received event: {e}"))?;
                 }
-
-                window
-                    .emit("quantum-metric", quantum_metric)
-                    .map_err(|e| format!("Failed to emit quantum-metric event: {e}"))?;
+                emit_frame(window, run_id, &mut index, started, token_piece, is_thinking)?;
             }
-
             if is_done {
-                let _ = window.emit("quantum-metric", 0.12_f64);
-                return Ok(full_output);
+                return Ok((full_output, index));
             }
         }
-    }
 
-    let remaining = line_buffer.trim();
-    if !remaining.is_empty() {
-        let json_payload = remaining
-            .strip_prefix("data:")
-            .map(|s| s.trim())
-            .unwrap_or(remaining);
-        if json_payload != "[DONE]" {
-            if let Ok(parsed_val) = serde_json::from_str::<Value>(json_payload) {
-                let (token_piece, is_thinking, _) = extract_token_from_json(&parsed_val);
-                if !token_piece.is_empty() {
-                    let dt = last_token_instant.elapsed().as_secs_f64();
-                    token_index += 1;
-                    let quantum_metric = compute_quantum_metric(&token_piece, dt, token_index);
-                    if is_thinking {
-                        let _ = window.emit("thinking-received", &token_piece);
-                    } else {
-                        full_output.push_str(&token_piece);
-                        let _ = window.emit("token-received", &token_piece);
-                    }
-                    let _ = window.emit("quantum-metric", quantum_metric);
-                }
-            }
+        if at_end {
+            return Ok((full_output, index));
         }
     }
-
-    Ok(full_output)
 }
 
 fn main() {
