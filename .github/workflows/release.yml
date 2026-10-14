@@ -7,9 +7,9 @@ on:
   workflow_dispatch:
     inputs:
       tag_name:
-        description: 'Release tag version (e.g. v0.1.0)'
+        description: 'Release tag version (e.g. v0.2.0)'
         required: false
-        default: 'v0.1.0'
+        default: 'v0.2.0'
 
 permissions:
   contents: write
@@ -48,7 +48,7 @@ jobs:
           elif [[ -n "${{ inputs.tag_name }}" ]]; then
             echo "tag=${{ inputs.tag_name }}" >> "$GITHUB_OUTPUT"
           else
-            echo "tag=v0.1.0" >> "$GITHUB_OUTPUT"
+            echo "tag=v0.2.0" >> "$GITHUB_OUTPUT"
           fi
 
       - name: Install Linux system dependencies (GTK3 / WebKit2GTK / AppIndicator)
@@ -66,7 +66,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
           cache: 'npm'
 
       - name: Setup Rust stable toolchain
@@ -93,19 +93,29 @@ jobs:
           tagName: ${{ steps.meta.outputs.tag }}
           releaseName: "Calabi-Yau AI Platform ${{ steps.meta.outputs.tag }}"
           releaseBody: |
-            ## Calabi-Yau AI Platform — Multi-Platform Desktop Release
+            ## Calabi-Yau AI Platform ${{ steps.meta.outputs.tag }} — Multi-Provider Cloud & Local Release
 
-            Higher-dimensional **Calabi-Yau Quintic Threefold** ($\mathbb{CP}^4$) WebGL visualizer and borderless cyberpunk overlay for local **Ollama** LLM inference (`http://localhost:11434/api/generate`).
+            Higher-dimensional **Calabi-Yau Quintic Threefold** ($\mathbb{CP}^4$) WebGL visualizer and borderless cyberpunk overlay featuring **Ollama Cloud (`https://ollama.com/api/chat`)** plus **18 Frontier AI Providers** and their newest 2026 models.
+
+            ### Supported Providers & 2026 Frontier Models
+            - **Ollama Cloud (`ollama.com`)**: `deepseek-v4.1-flash`, `deepseek-v4-pro:0813`, `mistral-large-4`, `kimi-k3`, `kimi-k2.7-code`, `glm-5.3`, `glm-5.3-flash`, `qwen3.5:397b`, `gemma4:31b`, `minimax-m3`, `nemotron-3-ultra`, `gpt-oss:120b` + live `/api/tags` sync
+            - **Anthropic**: `claude-opus-5-5`, `claude-sonnet-5-5`, `claude-haiku-5-5`, `claude-fable-5-1`, `claude-opus-5`
+            - **OpenAI**: `gpt-6-astra`, `gpt-6.1-sol`, `gpt-6-sol`, `gpt-6-luna`, `gpt-5.6-sol`, `gpt-5.6-terra`, `gpt-5.5-pro`, `gpt-5.3-codex`
+            - **Google DeepMind**: `gemini-4-argon`, `gemini-3.8-flash`, `gemini-3.7-flash`, `gemini-3.5-flash`, `gemini-3.1-pro`
+            - **xAI**: `grok-4.7`, `grok-4.6`, `grok-4.5`, `grok-4.3-beta`
+            - **DeepSeek**: `deepseek-v4.1-flash`, `deepseek-v4-pro-0813`, `deepseek-v4-pro`, `deepseek-reasoner`
+            - **Meta AI**: `muse-wonder-full`, `muse-wonder-1.0`, `muse-spark-1.3`, `llama-4-maverick-17b-128e`
+            - **Mistral AI**: `mistral-large-4`, `mistral-large-3-675b`, `devstral-2-123b`
+            - **Alibaba Qwen**: `qwen-3.8-max`, `qwen-3.8-27b`, `qwen-3.7-max`
+            - **Moonshot Kimi**: `kimi-k3`, `kimi-k2.7-code`, `kimi-k2.6`
+            - **Z.ai / Zhipu**: `glm-5.3`, `glm-5.3-flash`, `glm-5.2`
+            - **OpenRouter, Groq LPU, Together AI, Fireworks AI, Perplexity Sonar, Cerebras, NVIDIA NIM, & Ollama Local**
 
             ### Platform Installers & Bundles
             - **macOS (Apple Silicon M1/M2/M3/M4)**: `.dmg` & `.app.tar.gz` (`aarch64-apple-darwin`)
             - **macOS (Intel x86_64)**: `.dmg` & `.app.tar.gz` (`x86_64-apple-darwin`)
             - **Linux (x86_64)**: `.AppImage` & `.deb` (`ubuntu-22.04`)
             - **Windows (x86_64)**: `.msi` & `.exe` NSIS installer (`x86_64-pc-windows-msvc`)
-
-            ### Runtime Prerequisites
-            1. Ensure [Ollama](https://ollama.com) is running locally (`ollama serve`).
-            2. Pull your preferred local model (`ollama pull llama3`).
           releaseDraft: false
           prerelease: false
           args: ${{ matrix.args }}

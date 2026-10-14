@@ -2,6 +2,7 @@ import { invoke } from '@tauri-apps/api/tauri';
 import { listen } from '@tauri-apps/api/event';
 import { appWindow } from '@tauri-apps/api/window';
 import { CalabiYauCanvas } from './CalabiYauCanvas.js';
+import { AI_PROVIDERS } from './providers.js';
 
 const isTauriDesktop =
   typeof window !== 'undefined' &&
@@ -11,6 +12,7 @@ const dom = {
   viewport: document.getElementById('calabi-yau-viewport'),
   workspaceGrid: document.getElementById('workspace-grid'),
   statusBeacon: document.getElementById('status-beacon'),
+  activeProviderBanner: document.getElementById('active-provider-banner'),
   runtimeBadge: document.getElementById('hud-runtime-mode'),
   metricOmega: document.getElementById('metric-omega'),
   metricAmplitude: document.getElementById('metric-amplitude'),
@@ -26,21 +28,182 @@ const dom = {
   valExponent: document.getElementById('val-exponent'),
   valPhase: document.getElementById('val-phase'),
   valResolution: document.getElementById('val-resolution'),
+  btnToggleConfig: document.getElementById('btn-toggle-config'),
+  btnSyncModels: document.getElementById('btn-sync-models'),
   btnToggleLayout: document.getElementById('btn-toggle-layout'),
   btnPulseTest: document.getElementById('btn-pulse-test'),
   winMinimize: document.getElementById('win-minimize'),
   winMaximize: document.getElementById('win-maximize'),
   winClose: document.getElementById('win-close'),
+  providerSelect: document.getElementById('provider-select'),
+  modelSelect: document.getElementById('model-select'),
+  providerEnvBadge: document.getElementById('provider-env-badge'),
+  configDrawer: document.getElementById('config-drawer'),
+  apiKeyInput: document.getElementById('api-key-input'),
+  endpointInput: document.getElementById('endpoint-input'),
+  customModelInput: document.getElementById('custom-model-input'),
   chatMessages: document.getElementById('chat-messages'),
   chatForm: document.getElementById('chat-form'),
   promptInput: document.getElementById('prompt-input'),
-  modelSelect: document.getElementById('model-select'),
   btnSend: document.getElementById('btn-send'),
   btnSimulate: document.getElementById('btn-simulate'),
 };
 
 dom.runtimeBadge.textContent = isTauriDesktop ? 'TAURI // IPC READY' : 'WEBGL // STANDALONE';
 
+const STORAGE_KEY_PREFIX = 'calabi_yau_provider_cfg_';
+
+function loadProviderConfig(providerId) {
+  try {
+    const raw = localStorage.getItem(`${STORAGE_KEY_PREFIX}${providerId}`);
+    return raw ? JSON.parse(raw) : {};
+  } catch {
+    return {};
+  }
+}
+
+function saveProviderConfig(providerId, patch) {
+  try {
+    const current = loadProviderConfig(providerId);
+    const updated = { ...current, ...patch };
+    localStorage.setItem(`${STORAGE_KEY_PREFIX}${providerId}`, JSON.stringify(updated));
+  } catch {
+    // Ignore storage quota errors
+  }
+}
+
+function getActiveProvider() {
+  const id = dom.providerSelect.value;
+  return AI_PROVIDERS.find((p) => p.id === id) || AI_PROVIDERS[0];
+}
+
+function getSelectedModelSlug() {
+  const custom = dom.customModelInput.value.trim();
+  if (custom) return custom;
+  return dom.modelSelect.value;
+}
+
+function populateProviders() {
+  dom.providerSelect.innerHTML = '';
+  for (const provider of AI_PROVIDERS) {
+    const opt = document.createElement('option');
+    opt.value = provider.id;
+    opt.textContent = provider.name;
+    dom.providerSelect.appendChild(opt);
+  }
+}
+
+function populateModelsForProvider(provider, extraModels = []) {
+  dom.modelSelect.innerHTML = '';
+  const seen = new Set();
+  const combined = [...extraModels, ...provider.models];
+
+  for (const m of combined) {
+    if (seen.has(m.id)) continue;
+    seen.add(m.id);
+    const opt = document.createElement('option');
+    opt.value = m.id;
+    opt.textContent = m.label || m.id;
+    dom.modelSelect.appendChild(opt);
+  }
+
+  const saved = loadProviderConfig(provider.id);
+  if (saved.selectedModel && seen.has(saved.selectedModel)) {
+    dom.modelSelect.value = saved.selectedModel;
+  }
+
+  dom.providerEnvBadge.textContent = provider.envKeyName || 'LOCAL // NO KEY';
+  dom.activeProviderBanner.textContent = `${provider.badge} // ${getSelectedModelSlug().toUpperCase()}`;
+  dom.endpointInput.placeholder = provider.defaultEndpoint;
+  dom.endpointInput.value = saved.endpoint || '';
+  dom.apiKeyInput.value = saved.apiKey || '';
+  dom.customModelInput.value = saved.customModel || '';
+}
+
+populateProviders();
+populateModelsForProvider(AI_PROVIDERS[0]);
+
+dom.providerSelect.addEventListener('change', () => {
+  const provider = getActiveProvider();
+  populateModelsForProvider(provider);
+});
+
+dom.modelSelect.addEventListener('change', () => {
+  const provider = getActiveProvider();
+  saveProviderConfig(provider.id, { selectedModel: dom.modelSelect.value });
+  dom.activeProviderBanner.textContent = `${provider.badge} // ${getSelectedModelSlug().toUpperCase()}`;
+});
+
+dom.apiKeyInput.addEventListener('input', () => {
+  const provider = getActiveProvider();
+  saveProviderConfig(provider.id, { apiKey: dom.apiKeyInput.value.trim() });
+});
+
+dom.endpointInput.addEventListener('input', () => {
+  const provider = getActiveProvider();
+  saveProviderConfig(provider.id, { endpoint: dom.endpointInput.value.trim() });
+});
+
+dom.customModelInput.addEventListener('input', () => {
+  const provider = getActiveProvider();
+  saveProviderConfig(provider.id, { customModel: dom.customModelInput.value.trim() });
+  dom.activeProviderBanner.textContent = `${provider.badge} // ${getSelectedModelSlug().toUpperCase()}`;
+});
+
+dom.btnToggleConfig.addEventListener('click', () => {
+  dom.configDrawer.classList.toggle('hidden');
+  dom.btnToggleConfig.classList.toggle('active');
+});
+
+/**
+ * Queries live models from the selected provider (e.g. `https://ollama.com/api/tags` for Ollama Cloud)
+ * and merges them into the model dropdown.
+ */
+async function syncLiveModels() {
+  const provider = getActiveProvider();
+  const originalText = dom.btnSyncModels.textContent;
+  dom.btnSyncModels.textContent = 'SYNCING...';
+
+  try {
+    let discovered = [];
+    if (isTauriDesktop) {
+      discovered = await invoke('fetch_provider_models', {
+        provider: provider.id,
+        apiKey: dom.apiKeyInput.value.trim() || null,
+        endpoint: null,
+      });
+    } else if (provider.tagsEndpoint) {
+      const headers = {};
+      const key = dom.apiKeyInput.value.trim();
+      if (key) headers['Authorization'] = `Bearer ${key}`;
+      const res = await fetch(provider.tagsEndpoint, { headers });
+      if (res.ok) {
+        const data = await res.json();
+        discovered = (data.models || []).map((m) => ({
+          id: m.name || m.model,
+          label: `${m.name || m.model} [Live]`,
+        }));
+      }
+    }
+
+    if (Array.isArray(discovered) && discovered.length > 0) {
+      populateModelsForProvider(provider, discovered);
+      dom.btnSyncModels.textContent = `SYNCED (${discovered.length})`;
+    } else {
+      dom.btnSyncModels.textContent = 'CATALOG READY';
+    }
+  } catch {
+    dom.btnSyncModels.textContent = 'CATALOG READY';
+  } finally {
+    setTimeout(() => {
+      dom.btnSyncModels.textContent = originalText;
+    }, 1800);
+  }
+}
+
+dom.btnSyncModels.addEventListener('click', syncLiveModels);
+
+// Harmonic Sparkline Renderer
 const sparkCtx = dom.sparklineCanvas.getContext('2d');
 const metricHistory = new Array(56).fill(0.06);
 
@@ -174,6 +337,9 @@ let activeMetricBadge = null;
 let isGenerating = false;
 
 function createChatBubble(role, initialText = '', badgeText = '') {
+  const provider = getActiveProvider();
+  const modelSlug = getSelectedModelSlug();
+
   const article = document.createElement('article');
   article.className = `msg-bubble ${role}`;
 
@@ -186,7 +352,7 @@ function createChatBubble(role, initialText = '', badgeText = '') {
     role === 'user'
       ? 'OPERATOR // PROMPT'
       : role === 'assistant'
-      ? `OLLAMA // ${dom.modelSelect.value.toUpperCase()}`
+      ? `${provider.badge} // ${modelSlug.toUpperCase()}`
       : 'SYSTEM // ALERT';
 
   const metricSpan = document.createElement('span');
@@ -228,23 +394,39 @@ if (isTauriDesktop) {
 }
 
 /**
- * Streams a simulated Calabi-Yau theoretical physics response when Ollama is offline
+ * Extracts a token from any provider JSON chunk in browser-standalone mode.
+ */
+function extractBrowserStreamToken(parsed) {
+  if (typeof parsed.response === 'string' && parsed.response) return parsed.response;
+  if (parsed.message?.content) return parsed.message.content;
+  if (parsed.message?.thinking) return parsed.message.thinking;
+  if (parsed.choices?.[0]?.delta?.content) return parsed.choices[0].delta.content;
+  if (parsed.choices?.[0]?.delta?.reasoning_content) return parsed.choices[0].delta.reasoning_content;
+  if (parsed.delta?.text) return parsed.delta.text;
+  if (parsed.candidates?.[0]?.content?.parts?.[0]?.text) {
+    return parsed.candidates[0].content.parts[0].text;
+  }
+  return '';
+}
+
+/**
+ * Streams a simulated Calabi-Yau theoretical physics response when no API key is configured
  * or when the user clicks the SIMULATE button, driving real-time WebGL string vibrations.
  */
-async function runSimulatedQuantumStream(promptText, targetContentEl, targetMetricEl) {
+async function runSimulatedQuantumStream(promptText, provider, modelSlug, targetContentEl, targetMetricEl) {
   const responseParagraph =
-    `In compactified Type IIB superstring theory, the Fermat quintic Calabi-Yau threefold ` +
-    `M₅ ⊂ ℂℙ⁴ defined by ∑ zᵢ⁵ = 0 exhibits vanishing first Chern class c₁(TM) = 0 and ` +
-    `Euler characteristic χ = −200 (h¹¹ = 1, h²¹ = 101). Regarding "${promptText.slice(0, 64)}": ` +
-    `each token emitted by the local neural transformer perturbs the Kähler moduli space ` +
-    `and excites quantized closed-string vibrational harmonics across the 25 Riemann sheets.`;
+    `[${provider.badge} :: ${modelSlug}] In compactified Type IIB superstring theory, the Fermat quintic ` +
+    `Calabi-Yau threefold M₅ ⊂ ℂℙ⁴ defined by ∑ zᵢ⁵ = 0 exhibits vanishing first Chern class c₁(TM) = 0 ` +
+    `and Euler characteristic χ = −200 (h¹¹ = 1, h²¹ = 101). Regarding "${promptText.slice(0, 64)}": ` +
+    `each token streamed from ${modelSlug} perturbs the Kähler moduli space and excites quantized ` +
+    `closed-string vibrational harmonics across the 25 Riemann sheets.`;
 
   const tokens = responseParagraph.match(/\S+\s*/g) || [responseParagraph];
   let lastTick = performance.now();
 
   for (let i = 0; i < tokens.length; i++) {
     const token = tokens[i];
-    const delayMs = 22 + Math.random() * 38;
+    const delayMs = 20 + Math.random() * 35;
     await new Promise((resolve) => setTimeout(resolve, delayMs));
 
     const now = performance.now();
@@ -270,15 +452,20 @@ async function handlePromptSubmission(forceSimulation = false) {
   if (!prompt && !forceSimulation) return;
   if (isGenerating) return;
 
+  const provider = getActiveProvider();
+  const modelSlug = getSelectedModelSlug();
+  const apiKey = dom.apiKeyInput.value.trim();
+  const customEndpoint = dom.endpointInput.value.trim();
+
   const effectivePrompt =
-    prompt || 'Analyze the Ricci-flat metric spectrum of the quintic Calabi-Yau manifold.';
+    prompt || `Analyze the Ricci-flat metric spectrum of the quintic Calabi-Yau manifold using ${modelSlug}.`;
   dom.promptInput.value = '';
 
   isGenerating = true;
   dom.btnSend.disabled = true;
   dom.btnSimulate.disabled = true;
 
-  createChatBubble('user', effectivePrompt, 'TX // UTF-8');
+  createChatBubble('user', effectivePrompt, `${provider.badge} // TX`);
   const { content, metricSpan } = createChatBubble('assistant', '', 'STREAMING...');
   content.classList.add('streaming-cursor');
   activeAssistantBubble = content;
@@ -286,25 +473,46 @@ async function handlePromptSubmission(forceSimulation = false) {
 
   try {
     if (forceSimulation) {
-      await runSimulatedQuantumStream(effectivePrompt, content, metricSpan);
+      await runSimulatedQuantumStream(effectivePrompt, provider, modelSlug, content, metricSpan);
     } else if (isTauriDesktop) {
       await invoke('generate_calabi_yau_response', {
         prompt: effectivePrompt,
-        model: dom.modelSelect.value,
+        provider: provider.id,
+        model: modelSlug,
+        apiKey: apiKey || null,
+        endpoint: customEndpoint || null,
       });
     } else {
-      const response = await fetch('http://localhost:11434/api/generate', {
+      const targetUrl = customEndpoint || provider.defaultEndpoint;
+      const headers = { 'Content-Type': 'application/json' };
+      if (apiKey) {
+        if (provider.id === 'anthropic') {
+          headers['x-api-key'] = apiKey;
+          headers['anthropic-version'] = '2023-06-01';
+        } else if (provider.id === 'google') {
+          headers['x-goog-api-key'] = apiKey;
+        } else {
+          headers['Authorization'] = `Bearer ${apiKey}`;
+        }
+      }
+
+      const bodyPayload =
+        provider.id === 'google'
+          ? { contents: [{ role: 'user', parts: [{ text: effectivePrompt }] }] }
+          : {
+              model: modelSlug,
+              messages: [{ role: 'user', content: effectivePrompt }],
+              stream: true,
+            };
+
+      const response = await fetch(targetUrl, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          model: dom.modelSelect.value,
-          prompt: effectivePrompt,
-          stream: true,
-        }),
+        headers,
+        body: JSON.stringify(bodyPayload),
       });
 
       if (!response.ok || !response.body) {
-        throw new Error(`HTTP ${response.status}`);
+        throw new Error(`HTTP ${response.status} from ${provider.badge}`);
       }
 
       const reader = response.body.getReader();
@@ -319,21 +527,25 @@ async function handlePromptSubmission(forceSimulation = false) {
 
         let newlineIdx;
         while ((newlineIdx = buffer.indexOf('\n')) !== -1) {
-          const line = buffer.slice(0, newlineIdx).trim();
+          const rawLine = buffer.slice(0, newlineIdx).trim();
           buffer = buffer.slice(newlineIdx + 1);
-          if (!line) continue;
+          if (!rawLine || rawLine.startsWith(':') || rawLine.startsWith('event:')) continue;
 
-          const parsed = JSON.parse(line);
-          if (parsed.response) {
+          const jsonStr = rawLine.startsWith('data:') ? rawLine.slice(5).trim() : rawLine;
+          if (!jsonStr || jsonStr === '[DONE]') continue;
+
+          const parsed = JSON.parse(jsonStr);
+          const tokenPiece = extractBrowserStreamToken(parsed);
+          if (tokenPiece) {
             const now = performance.now();
             const dt = Math.max(0.002, (now - lastTime) / 1000);
             lastTime = now;
 
-            const metric = Math.min(3.5, (1.0 / dt / 42.0) * (parsed.response.length / 5.0));
-            content.textContent += parsed.response;
+            const metric = Math.min(3.5, (1.0 / dt / 42.0) * (tokenPiece.length / 5.0));
+            content.textContent += tokenPiece;
             metricSpan.textContent = `ω = ${metric.toFixed(3)} THz`;
             recordTokenTimestamp();
-            calabiYau.triggerQuantumPulse(metric, parsed.response);
+            calabiYau.triggerQuantumPulse(metric, tokenPiece);
             dom.chatMessages.scrollTop = dom.chatMessages.scrollHeight;
           }
         }
@@ -345,9 +557,9 @@ async function handlePromptSubmission(forceSimulation = false) {
     notice.style.color = '#ff85a2';
     notice.style.fontSize = '11px';
     notice.style.marginBottom = '6px';
-    notice.textContent = `[Ollama endpoint unreachable (${errMsg}) — engaging local Calabi-Yau quantum simulator]`;
+    notice.textContent = `[${provider.badge} (${modelSlug}) notice: ${errMsg} — click "API KEY // ENDPOINT" to set ${provider.envKeyName || 'credentials'}, engaging quantum simulator]`;
     content.appendChild(notice);
-    await runSimulatedQuantumStream(effectivePrompt, content, metricSpan);
+    await runSimulatedQuantumStream(effectivePrompt, provider, modelSlug, content, metricSpan);
   } finally {
     content.classList.remove('streaming-cursor');
     activeAssistantBubble = null;

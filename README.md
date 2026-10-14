@@ -1,31 +1,38 @@
-# Calabi-Yau AI Platform
+# Calabi-Yau AI Platform (v0.2.0)
 
-A borderless, cyberpunk desktop overlay built with **Rust + Tauri**, **Three.js / WebGL**, and **Ollama**. It streams local LLM inference from `http://localhost:11434/api/generate` and translates real-time token generation velocity and byte entropy into higher-dimensional **Calabi-Yau quintic threefold** ($z_1^n + z_2^n = 1 \subset \mathbb{CP}^4$) string vibrations.
+A borderless, cyberpunk desktop overlay built with **Rust + Tauri**, **Three.js / WebGL**, and a **Universal Multi-Provider Quantum LLM Bridge** supporting **Ollama Cloud (`https://ollama.com/api/chat`)**, **17 additional Frontier Cloud AI Providers**, and **Ollama Local (`http://localhost:11434`)**.
 
-## Architecture Overview
+It streams tokens in real time and translates instantaneous generation velocity ($\text{tokens/s}$) and byte-level spectral entropy into higher-dimensional **Calabi-Yau quintic threefold** ($z_1^n + z_2^n = 1 \subset \mathbb{CP}^4$) string vibrations.
 
-1. **Tauri Rust Backend (`src-tauri/src/main.rs` & `src-tauri/Cargo.toml`)**
-   - Exposes the asynchronous `generate_calabi_yau_response` Tauri command.
-   - Streams NDJSON responses from local Ollama (`http://localhost:11434/api/generate`) using `reqwest` with the `stream` feature and `tokio`.
-   - Computes an instantaneous quantum vibration frequency metric ($\omega \in [0.08, 5.0]\text{ THz}$) from inter-token latency ($\Delta t$), token character length, and byte-level spectral entropy.
-   - Emits `token-received` and `quantum-metric` Tauri window events to the frontend in real time.
+## Supported Providers & Newest 2026 Models
 
-2. **Heterogeneous WebGL Interactive Canvas (`src/CalabiYauCanvas.js`)**
-   - Constructs a 3D projection of the Fermat Calabi-Yau manifold cross-section $z_1^n + z_2^n = 1$ across $n^2$ Riemann sheets in $\mathbb{C}^2 \cong \mathbb{R}^4$ projected into $\mathbb{R}^3$ via Kähler phase angle $\xi$.
-   - Renders a glowing, translucent holographic wireframe mesh using a custom `THREE.ShaderMaterial` with `THREE.AdditiveBlending`, Fresnel edge luminescence, and 4D phase-shifted spectral coloring.
-   - Deforms vertex positions continuously using a 3D Simplex Noise engine (`SimplexNoise3D` on CPU buffer attributes + GLSL 3D Simplex Noise in the vertex shader).
-   - Subscribes to `token-received` and `quantum-metric` events to spike vertex deformation amplitude and spectral saturation in sync with LLM inference.
-
-3. **Borderless Cyberpunk Frontend (`index.html`, `src/style.css`, `src/main.js`)**
-   - Custom borderless Tauri titlebar (`data-tauri-drag-region`) with window controls and layout toggles.
-   - Live Quantum Telemetry HUD with harmonic sparkline, parametric sliders ($n$, $\xi$, mesh resolution), and streaming neural console.
+| Provider | Default Endpoint | Flagship 2026 Models Included |
+| :--- | :--- | :--- |
+| **Ollama Cloud** | `https://ollama.com/api/chat` | `deepseek-v4.1-flash`, `deepseek-v4-pro:0813`, `mistral-large-4`, `kimi-k3`, `kimi-k2.7-code`, `glm-5.3`, `glm-5.3-flash`, `qwen3.5:397b`, `gemma4:31b`, `minimax-m3`, `nemotron-3-ultra`, `gpt-oss:120b` (+ Live `/api/tags` Sync) |
+| **Anthropic** | `https://api.anthropic.com/v1/messages` | `claude-opus-5-5`, `claude-sonnet-5-5`, `claude-haiku-5-5`, `claude-fable-5-1`, `claude-opus-5`, `claude-sonnet-5` |
+| **OpenAI** | `https://api.openai.com/v1/chat/completions` | `gpt-6-astra`, `gpt-6.1-sol`, `gpt-6-sol`, `gpt-6-luna`, `gpt-5.6-sol`, `gpt-5.6-terra`, `gpt-5.5-pro`, `gpt-5.3-codex` |
+| **Google DeepMind** | `https://generativelanguage.googleapis.com/v1beta/...` | `gemini-4-argon`, `gemini-3.8-flash`, `gemini-3.7-flash`, `gemini-3.6-flash`, `gemini-3.5-flash`, `gemini-3.1-pro` |
+| **xAI (Grok)** | `https://api.x.ai/v1/chat/completions` | `grok-4.7`, `grok-4.6`, `grok-4.5`, `grok-4.3-beta`, `grok-4.20` |
+| **DeepSeek** | `https://api.deepseek.com/chat/completions` | `deepseek-v4.1-flash`, `deepseek-v4-pro-0813`, `deepseek-v4-pro`, `deepseek-reasoner` |
+| **Meta AI** | `https://api.llama.com/compat/v1/chat/completions` | `muse-wonder-full`, `muse-wonder-1.0`, `muse-spark-1.3`, `llama-4-maverick-17b-128e`, `llama-4-scout-17b-16e` |
+| **Mistral AI** | `https://api.mistral.ai/v1/chat/completions` | `mistral-large-4`, `mistral-large-3-675b`, `devstral-2-123b`, `codestral-latest` |
+| **Alibaba Qwen** | `https://dashscope-intl.aliyuncs.com/compatible-mode/v1/...` | `qwen-3.8-max`, `qwen-3.8-27b`, `qwen-3.7-max`, `qwen3.5-397b-a17b` |
+| **Moonshot Kimi** | `https://api.moonshot.ai/v1/chat/completions` | `kimi-k3`, `kimi-k2.7-code`, `kimi-k2.6`, `kimi-k2.5` |
+| **Z.ai / Zhipu** | `https://open.bigmodel.cn/api/paas/v4/chat/completions` | `glm-5.3`, `glm-5.3-flash`, `glm-5.2`, `glm-5.1` |
+| **OpenRouter** | `https://openrouter.ai/api/v1/chat/completions` | Universal access to 300+ models (`anthropic/claude-opus-5.5`, `openai/gpt-6-astra`, `google/gemini-4-argon`, etc.) |
+| **Groq LPU** | `https://api.groq.com/openai/v1/chat/completions` | `deepseek-v4.1-flash`, `llama-4-maverick-17b-128e-instruct`, `qwen-3.8-27b`, `gpt-oss-120b` |
+| **Together AI** | `https://api.together.xyz/v1/chat/completions` | `deepseek-ai/DeepSeek-V4.1-Flash`, `moonshotai/Kimi-K3`, `Qwen/Qwen3.8-Max` |
+| **Fireworks AI** | `https://api.fireworks.ai/inference/v1/chat/completions` | `accounts/fireworks/models/deepseek-v4p1-flash`, `kimi-k3`, `qwen3p8-max` |
+| **Perplexity** | `https://api.perplexity.ai/chat/completions` | `sonar-deep-research`, `sonar-reasoning-pro`, `sonar-pro`, `sonar` |
+| **Cerebras** | `https://api.cerebras.ai/v1/chat/completions` | `llama-4-maverick-17b-128e`, `deepseek-v4.1-flash`, `qwen-3.8-27b` |
+| **NVIDIA NIM** | `https://integrate.api.nvidia.com/v1/chat/completions` | `nvidia/nemotron-3-ultra`, `nvidia/nemotron-3-super`, `nvidia/nemotron-3-nano-30b` |
+| **Ollama Local** | `http://localhost:11434/api/chat` | `gemma4:31b`, `deepseek-v4.1-flash`, `qwen3.8:27b`, `glm-5.3-flash`, `llama4:scout`, `llama3` |
 
 ## Quick Start
 
 ```bash
-# 1. Start local Ollama server and pull llama3
-ollama serve &
-ollama pull llama3
+# 1. (Optional) Export your Ollama Cloud or provider API key, or enter it directly in the UI's "API KEY // ENDPOINT" drawer:
+export OLLAMA_API_KEY="your_ollama_cloud_api_key"
 
 # 2. Install frontend dependencies
 npm install

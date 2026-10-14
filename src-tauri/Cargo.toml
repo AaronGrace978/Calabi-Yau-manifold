@@ -1,6 +1,6 @@
 [package]
 name = "calabi-yau-ai-platform"
-version = "0.1.0"
+version = "0.2.0"
 description = "Calabi-Yau AI Platform: Higher-dimensional geometric visualization for local Ollama LLM inference"
 authors = ["Principal Architecture Team"]
 license = "MIT"
