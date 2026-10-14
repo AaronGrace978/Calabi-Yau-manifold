@@ -1,5 +1,8 @@
 # Calabi-Yau AI Platform
 
+<img width="1376" height="768" alt="image" src="https://github.com/user-attachments/assets/6f60a260-703c-48b7-ad7d-91bcc959fbdf" />
+
+
 A borderless, cyberpunk desktop overlay built with **Rust + Tauri**, **Three.js / WebGL**, and **Ollama**. It streams local LLM inference from `http://localhost:11434/api/generate` and translates real-time token generation velocity and byte entropy into higher-dimensional **Calabi-Yau quintic threefold** ($z_1^n + z_2^n = 1 \subset \mathbb{CP}^4$) string vibrations.
 
 ## Architecture Overview
