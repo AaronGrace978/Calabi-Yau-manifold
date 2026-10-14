@@ -3,21 +3,27 @@
     windows_subsystem = "windows"
 )]
 
+mod guardrails;
 mod stream;
 
 use futures_util::StreamExt;
+use guardrails::{
+    evaluate_command_policy, sanitize_project_slug, sanitize_relative_project_path,
+    validate_pc_path, GuardrailMode, PolicyVerdict,
+};
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
+use serde_json::{json, Value};
 use stream::{
-    build_payload, extract_token_from_json, parse_stream_line, InferenceDone, InferenceFrame,
-    SamplingParams,
+    build_payload_with_system, extract_token_from_json, parse_stream_line, InferenceDone,
+    InferenceFrame, SamplingParams,
 };
 use std::env;
 use std::fs;
 use std::path::PathBuf;
-use std::time::{Instant, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use tauri::{AppHandle, Window, WindowBuilder, WindowUrl};
+use tokio::process::Command;
 
 /// Resolves an API key from explicit user input or standard provider environment variables.
 fn resolve_api_key(provider_id: &str, provided_key: Option<String>) -> Option<String> {
@@ -198,6 +204,15 @@ fn resolve_projects_directory() -> Result<PathBuf, String> {
     Ok(projects_dir)
 }
 
+/// Resolves the dedicated multi-file builds directory `~/CalabiYauProjects/builds`.
+fn resolve_builds_directory() -> Result<PathBuf, String> {
+    let projects_dir = resolve_projects_directory()?;
+    let builds_dir = projects_dir.join("builds");
+    fs::create_dir_all(&builds_dir)
+        .map_err(|e| format!("Failed to create builds directory {:?}: {e}", builds_dir))?;
+    Ok(builds_dir)
+}
+
 fn sanitize_filename(name: &str, default_ext: &str) -> String {
     let cleaned: String = name
         .chars()
@@ -233,6 +248,483 @@ struct SavedArtifactInfo {
     path: String,
     bytes: usize,
     directory: String,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+#[serde(rename_all = "camelCase")]
+struct BuildProjectFile {
+    path: String,
+    content: String,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+#[serde(rename_all = "camelCase")]
+struct BuildProjectRecord {
+    slug: String,
+    title: String,
+    template: String,
+    prompt: String,
+    created_at_ms: u128,
+    directory: String,
+    entry_file: String,
+    file_count: usize,
+    total_bytes: usize,
+    files: Vec<BuildProjectFile>,
+    guardrail: PolicyVerdict,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+#[serde(rename_all = "camelCase")]
+struct MachineWorkspaceInfo {
+    os: String,
+    arch: String,
+    projects_dir: String,
+    builds_dir: String,
+    home_dir: String,
+    available_toolchains: Vec<String>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+#[serde(rename_all = "camelCase")]
+struct PcDirectoryEntry {
+    name: String,
+    path: String,
+    is_dir: bool,
+    size_bytes: u64,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+#[serde(rename_all = "camelCase")]
+struct PcDirectoryListing {
+    directory: String,
+    entries: Vec<PcDirectoryEntry>,
+    guardrail: PolicyVerdict,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+#[serde(rename_all = "camelCase")]
+struct GuardedCommandResult {
+    command: String,
+    cwd: String,
+    exit_code: i32,
+    stdout: String,
+    stderr: String,
+    duration_ms: u128,
+    guardrail: PolicyVerdict,
+}
+
+/// Returns information about the local machine workspace (`~/CalabiYauProjects/builds`) and available toolchains.
+#[tauri::command]
+async fn get_machine_workspace_info() -> Result<MachineWorkspaceInfo, String> {
+    let projects_dir = resolve_projects_directory()?;
+    let builds_dir = resolve_builds_directory()?;
+    let home_dir = env::var("HOME")
+        .or_else(|_| env::var("USERPROFILE"))
+        .unwrap_or_else(|_| projects_dir.to_string_lossy().to_string());
+
+    let mut toolchains = Vec::new();
+    for bin in ["node", "npm", "npx", "cargo", "rustc", "python3", "git"] {
+        if let Ok(output) = Command::new(bin).arg("--version").output().await {
+            if output.status.success() {
+                let ver = String::from_utf8_lossy(&output.stdout)
+                    .lines()
+                    .next()
+                    .unwrap_or("")
+                    .trim()
+                    .to_string();
+                toolchains.push(format!("{bin} ({ver})"));
+            }
+        }
+    }
+
+    Ok(MachineWorkspaceInfo {
+        os: env::consts::OS.to_string(),
+        arch: env::consts::ARCH.to_string(),
+        projects_dir: projects_dir.to_string_lossy().to_string(),
+        builds_dir: builds_dir.to_string_lossy().to_string(),
+        home_dir,
+        available_toolchains: toolchains,
+    })
+}
+
+/// Writes a full multi-file application build into `~/CalabiYauProjects/builds/<slug>/`
+/// with strict path guardrails and a `calabi-build-manifest.json` descriptor.
+#[tauri::command]
+#[allow(clippy::too_many_arguments)]
+async fn write_build_project(
+    slug: String,
+    title: String,
+    template: String,
+    prompt: String,
+    entry_file: Option<String>,
+    files: Vec<BuildProjectFile>,
+    guardrail_mode: Option<String>,
+) -> Result<BuildProjectRecord, String> {
+    let mode = GuardrailMode::from_str_opt(guardrail_mode.as_deref());
+    let builds_dir = resolve_builds_directory()?;
+    let safe_slug = sanitize_project_slug(&slug);
+    let project_dir = builds_dir.join(&safe_slug);
+
+    let verdict = validate_pc_path(&project_dir, &builds_dir, mode, true);
+    if !verdict.allowed {
+        return Err(verdict.reason);
+    }
+
+    if mode != GuardrailMode::DryRun {
+        fs::create_dir_all(&project_dir)
+            .map_err(|e| format!("Failed to create project build folder {:?}: {e}", project_dir))?;
+    }
+
+    let mut sanitized_files = Vec::new();
+    let mut total_bytes = 0usize;
+
+    for file in files {
+        let rel = sanitize_relative_project_path(&file.path)?;
+        let full_path = project_dir.join(&rel);
+        if mode != GuardrailMode::DryRun {
+            if let Some(parent) = full_path.parent() {
+                fs::create_dir_all(parent)
+                    .map_err(|e| format!("Failed to create subdirectory {:?}: {e}", parent))?;
+            }
+            fs::write(&full_path, file.content.as_bytes())
+                .map_err(|e| format!("Failed to write file {:?}: {e}", full_path))?;
+        }
+        total_bytes += file.content.len();
+        sanitized_files.push(BuildProjectFile {
+            path: rel.to_string_lossy().replace('\\', "/"),
+            content: file.content,
+        });
+    }
+
+    let created_at_ms = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_millis())
+        .unwrap_or(0);
+
+    let resolved_entry = entry_file
+        .filter(|e| !e.trim().is_empty())
+        .unwrap_or_else(|| {
+            sanitized_files
+                .first()
+                .map(|f| f.path.clone())
+                .unwrap_or_else(|| "index.html".to_string())
+        });
+
+    let manifest = json!({
+        "slug": safe_slug,
+        "title": title,
+        "template": template,
+        "prompt": prompt,
+        "createdAtMs": created_at_ms,
+        "entryFile": resolved_entry,
+        "fileCount": sanitized_files.len(),
+        "totalBytes": total_bytes,
+        "files": sanitized_files.iter().map(|f| &f.path).collect::<Vec<_>>(),
+    });
+
+    if mode != GuardrailMode::DryRun {
+        let manifest_path = project_dir.join("calabi-build-manifest.json");
+        let _ = fs::write(
+            &manifest_path,
+            serde_json::to_string_pretty(&manifest).unwrap_or_default(),
+        );
+    }
+
+    Ok(BuildProjectRecord {
+        slug: safe_slug,
+        title,
+        template,
+        prompt,
+        created_at_ms,
+        directory: project_dir.to_string_lossy().to_string(),
+        entry_file: resolved_entry,
+        file_count: sanitized_files.len(),
+        total_bytes,
+        files: sanitized_files,
+        guardrail: verdict,
+    })
+}
+
+/// Lists all multi-file projects inside `~/CalabiYauProjects/builds/`.
+#[tauri::command]
+async fn list_build_projects() -> Result<Vec<BuildProjectRecord>, String> {
+    let builds_dir = resolve_builds_directory()?;
+    let mut records = Vec::new();
+
+    if let Ok(entries) = fs::read_dir(&builds_dir) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if !path.is_dir() {
+                continue;
+            }
+            let slug = path
+                .file_name()
+                .and_then(|s| s.to_str())
+                .unwrap_or("build")
+                .to_string();
+            let manifest_path = path.join("calabi-build-manifest.json");
+            let mut title = slug.clone();
+            let mut template = "multi-file-app".to_string();
+            let mut prompt = String::new();
+            let mut created_at_ms = 0u128;
+            let mut entry_file = "index.html".to_string();
+
+            if let Ok(raw) = fs::read_to_string(&manifest_path) {
+                if let Ok(val) = serde_json::from_str::<Value>(&raw) {
+                    if let Some(t) = val.get("title").and_then(|v| v.as_str()) {
+                        title = t.to_string();
+                    }
+                    if let Some(tp) = val.get("template").and_then(|v| v.as_str()) {
+                        template = tp.to_string();
+                    }
+                    if let Some(p) = val.get("prompt").and_then(|v| v.as_str()) {
+                        prompt = p.to_string();
+                    }
+                    if let Some(c) = val.get("createdAtMs").and_then(|v| v.as_u64()) {
+                        created_at_ms = c as u128;
+                    }
+                    if let Some(ef) = val.get("entryFile").and_then(|v| v.as_str()) {
+                        entry_file = ef.to_string();
+                    }
+                }
+            }
+
+            let mut files = Vec::new();
+            let mut total_bytes = 0usize;
+            collect_project_files(&path, &path, &mut files, &mut total_bytes);
+
+            records.push(BuildProjectRecord {
+                slug,
+                title,
+                template,
+                prompt,
+                created_at_ms,
+                directory: path.to_string_lossy().to_string(),
+                entry_file,
+                file_count: files.len(),
+                total_bytes,
+                files,
+                guardrail: PolicyVerdict {
+                    allowed: true,
+                    mode: GuardrailMode::WorkspaceGuarded,
+                    reason: "Verified build workspace".to_string(),
+                    sanitized_target: path.to_string_lossy().to_string(),
+                },
+            });
+        }
+    }
+
+    records.sort_by(|a, b| b.created_at_ms.cmp(&a.created_at_ms));
+    Ok(records)
+}
+
+fn collect_project_files(
+    root: &PathBuf,
+    current: &PathBuf,
+    out: &mut Vec<BuildProjectFile>,
+    total_bytes: &mut usize,
+) {
+    if let Ok(entries) = fs::read_dir(current) {
+        for entry in entries.flatten() {
+            let p = entry.path();
+            let name = p.file_name().and_then(|n| n.to_str()).unwrap_or("");
+            if name == "node_modules" || name == "target" || name == ".git" || name == "dist" {
+                continue;
+            }
+            if p.is_dir() {
+                collect_project_files(root, &p, out, total_bytes);
+            } else if p.is_file() {
+                if let Ok(rel) = p.strip_prefix(root) {
+                    if let Ok(content) = fs::read_to_string(&p) {
+                        *total_bytes += content.len();
+                        out.push(BuildProjectFile {
+                            path: rel.to_string_lossy().replace('\\', "/"),
+                            content,
+                        });
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// Inspects a directory on the user's PC under the active guardrail policy.
+#[tauri::command]
+async fn inspect_pc_directory(
+    directory_path: Option<String>,
+    guardrail_mode: Option<String>,
+) -> Result<PcDirectoryListing, String> {
+    let mode = GuardrailMode::from_str_opt(guardrail_mode.as_deref());
+    let builds_dir = resolve_builds_directory()?;
+    let target = match directory_path.filter(|s| !s.trim().is_empty()) {
+        Some(raw) => PathBuf::from(raw),
+        None => builds_dir.clone(),
+    };
+
+    let verdict = validate_pc_path(&target, &builds_dir, mode, false);
+    if !verdict.allowed {
+        return Err(verdict.reason);
+    }
+
+    let mut entries = Vec::new();
+    let read_dir = fs::read_dir(&target)
+        .map_err(|e| format!("Failed to read directory {:?}: {e}", target))?;
+
+    for entry in read_dir.flatten() {
+        let p = entry.path();
+        let meta = entry.metadata().ok();
+        let is_dir = meta.as_ref().map(|m| m.is_dir()).unwrap_or(false);
+        let size_bytes = meta.as_ref().map(|m| m.len()).unwrap_or(0);
+        let name = p
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("")
+            .to_string();
+        entries.push(PcDirectoryEntry {
+            name,
+            path: p.to_string_lossy().to_string(),
+            is_dir,
+            size_bytes,
+        });
+    }
+
+    entries.sort_by(|a, b| b.is_dir.cmp(&a.is_dir).then_with(|| a.name.cmp(&b.name)));
+
+    Ok(PcDirectoryListing {
+        directory: target.to_string_lossy().to_string(),
+        entries,
+        guardrail: verdict,
+    })
+}
+
+/// Reads a UTF-8 text file from the user's PC under the active guardrail policy.
+#[tauri::command]
+async fn read_pc_file(
+    file_path: String,
+    guardrail_mode: Option<String>,
+) -> Result<BuildProjectFile, String> {
+    let mode = GuardrailMode::from_str_opt(guardrail_mode.as_deref());
+    let builds_dir = resolve_builds_directory()?;
+    let target = PathBuf::from(&file_path);
+
+    let verdict = validate_pc_path(&target, &builds_dir, mode, false);
+    if !verdict.allowed {
+        return Err(verdict.reason);
+    }
+
+    let content = fs::read_to_string(&target)
+        .map_err(|e| format!("Failed to read file {:?}: {e}", target))?;
+
+    Ok(BuildProjectFile {
+        path: verdict.sanitized_target,
+        content,
+    })
+}
+
+/// Writes a UTF-8 text file to the user's PC under the active guardrail policy.
+#[tauri::command]
+async fn write_pc_file(
+    file_path: String,
+    content: String,
+    guardrail_mode: Option<String>,
+) -> Result<PolicyVerdict, String> {
+    let mode = GuardrailMode::from_str_opt(guardrail_mode.as_deref());
+    let builds_dir = resolve_builds_directory()?;
+    let target = PathBuf::from(&file_path);
+
+    let verdict = validate_pc_path(&target, &builds_dir, mode, true);
+    if !verdict.allowed {
+        return Err(verdict.reason);
+    }
+
+    if mode != GuardrailMode::DryRun {
+        if let Some(parent) = target.parent() {
+            fs::create_dir_all(parent)
+                .map_err(|e| format!("Failed to create parent directory {:?}: {e}", parent))?;
+        }
+        fs::write(&target, content.as_bytes())
+            .map_err(|e| format!("Failed to write file {:?}: {e}", target))?;
+    }
+
+    Ok(verdict)
+}
+
+/// Executes a developer toolchain command inside a build directory after passing guardrail verification.
+#[tauri::command]
+async fn execute_guarded_command(
+    command: String,
+    cwd: Option<String>,
+    guardrail_mode: Option<String>,
+) -> Result<GuardedCommandResult, String> {
+    let mode = GuardrailMode::from_str_opt(guardrail_mode.as_deref());
+    let builds_dir = resolve_builds_directory()?;
+    let working_dir = match cwd.filter(|s| !s.trim().is_empty()) {
+        Some(raw) => {
+            let candidate = PathBuf::from(&raw);
+            if candidate.is_absolute() {
+                candidate
+            } else {
+                builds_dir.join(sanitize_project_slug(&raw))
+            }
+        }
+        None => builds_dir.clone(),
+    };
+
+    let dir_verdict = validate_pc_path(&working_dir, &builds_dir, mode, false);
+    if !dir_verdict.allowed {
+        return Err(dir_verdict.reason);
+    }
+
+    let cmd_verdict = evaluate_command_policy(&command, mode);
+    if !cmd_verdict.allowed {
+        return Err(cmd_verdict.reason);
+    }
+
+    if mode == GuardrailMode::DryRun {
+        return Ok(GuardedCommandResult {
+            command,
+            cwd: working_dir.to_string_lossy().to_string(),
+            exit_code: 0,
+            stdout: "[DRY-RUN] Command passed guardrail policy; execution skipped in dry-run mode."
+                .to_string(),
+            stderr: String::new(),
+            duration_ms: 0,
+            guardrail: cmd_verdict,
+        });
+    }
+
+    fs::create_dir_all(&working_dir)
+        .map_err(|e| format!("Failed to ensure working directory {:?}: {e}", working_dir))?;
+
+    let started = Instant::now();
+    let parts: Vec<&str> = command.split_whitespace().collect();
+    let (program, args) = parts
+        .split_first()
+        .ok_or_else(|| "Command is empty".to_string())?;
+
+    let child_future = Command::new(program)
+        .args(args)
+        .current_dir(&working_dir)
+        .output();
+
+    let output = tokio::time::timeout(Duration::from_secs(45), child_future)
+        .await
+        .map_err(|_| format!("Command timed out after 45s: {command}"))?
+        .map_err(|e| format!("Failed to spawn '{program}': {e}"))?;
+
+    let exit_code = output.status.code().unwrap_or(-1);
+    let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+    let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+
+    Ok(GuardedCommandResult {
+        command,
+        cwd: working_dir.to_string_lossy().to_string(),
+        exit_code,
+        stdout,
+        stderr,
+        duration_ms: started.elapsed().as_millis(),
+        guardrail: cmd_verdict,
+    })
 }
 
 /// Native machine harness: saves any LLM-generated HTML/GLSL/JS/Rust code block or full project
@@ -373,6 +865,7 @@ async fn generate_calabi_yau_response(
     endpoint: Option<String>,
     run_id: Option<String>,
     sampling: Option<SamplingParams>,
+    system_prompt: Option<String>,
 ) -> Result<String, String> {
     let run_id = run_id
         .filter(|r| !r.trim().is_empty())
@@ -388,6 +881,7 @@ async fn generate_calabi_yau_response(
         api_key,
         endpoint,
         sampling.unwrap_or_default(),
+        system_prompt,
     )
     .await;
 
@@ -418,6 +912,7 @@ async fn stream_completion(
     api_key: Option<String>,
     endpoint: Option<String>,
     sampling: SamplingParams,
+    system_prompt: Option<String>,
 ) -> Result<(String, u64), String> {
     let provider_id = provider
         .as_deref()
@@ -474,7 +969,14 @@ async fn stream_completion(
         }
     }
 
-    let payload = build_payload(&provider_id, &selected_model, &prompt, &api_url, sampling);
+    let payload = build_payload_with_system(
+        &provider_id,
+        &selected_model,
+        &prompt,
+        system_prompt.as_deref(),
+        &api_url,
+        sampling,
+    );
 
     let response = req.json(&payload).send().await.map_err(|e| {
         format!("Failed to connect to {provider_id} endpoint ({api_url}): {e}")
@@ -536,7 +1038,14 @@ fn main() {
             fetch_provider_models,
             save_artifact_to_disk,
             list_saved_artifacts,
-            launch_artifact_window
+            launch_artifact_window,
+            get_machine_workspace_info,
+            write_build_project,
+            list_build_projects,
+            inspect_pc_directory,
+            read_pc_file,
+            write_pc_file,
+            execute_guarded_command
         ])
         .run(tauri::generate_context!())
         .expect("error while running Calabi-Yau AI Platform Tauri application");

@@ -1363,3 +1363,56 @@ body {
 .msg-bubble.assistant.lane {
   border-left-width: 3px;
 }
+
+/* ============================================================================
+   HARDWARE-ADAPTIVE GRAPHICS: STEAM DECK (1280x800 APU) & LOW-END OPTIMIZATIONS
+   Disables expensive multi-pass CSS backdrop-filter blurs on integrated/APU GPUs
+   ============================================================================ */
+body.gfx-reduced-blur .telemetry-hud,
+body.gfx-reduced-blur .manifold-controls,
+body.gfx-reduced-blur .instrument-hud,
+body.gfx-reduced-blur .chat-panel,
+body.gfx-reduced-blur .launcher-modal,
+body.gfx-reduced-blur .launcher-dialog {
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.65) !important;
+}
+
+body.gfx-reduced-blur .telemetry-hud,
+body.gfx-reduced-blur .manifold-controls,
+body.gfx-reduced-blur .instrument-hud {
+  background: rgba(6, 11, 24, 0.94) !important;
+}
+
+/* Valve Steam Deck (1280x800) & Compact Laptop Display Layout Scaling */
+@media (max-width: 1340px), (max-height: 830px) {
+  .workspace-grid {
+    grid-template-columns: 1fr 370px;
+  }
+
+  .telemetry-hud {
+    top: 10px;
+    left: 10px;
+    width: 256px;
+    padding: 9px 11px;
+  }
+
+  .manifold-controls {
+    bottom: 10px;
+    left: 10px;
+    padding: 8px 11px;
+    gap: 7px;
+    max-width: calc(100% - 310px);
+    flex-wrap: wrap;
+  }
+
+  .instrument-hud {
+    top: 10px;
+    right: 10px;
+    bottom: 10px;
+    width: 280px;
+    padding: 9px 10px;
+  }
+}
+

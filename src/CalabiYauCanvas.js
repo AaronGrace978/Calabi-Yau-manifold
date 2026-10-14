@@ -5,6 +5,17 @@ import {
   MAX_FERMAT_DEGREE,
   PARAM_DOMAIN,
 } from './instrument/manifoldMath.js';
+import {
+  evaluateDimensionalPoint,
+  getDimensionSpace,
+  computeTopologicalInvariants,
+} from './dimensions/dimensionalEngine.js';
+import {
+  GRAPHICS_PROFILES,
+  getGraphicsProfile,
+  detectLiveHardwareProfile,
+  AdaptiveFpsGovernor,
+} from './graphics/hardwareProfile.js';
 
 const MAX_SHEETS = MAX_FERMAT_DEGREE * MAX_FERMAT_DEGREE;
 const TRAJECTORY_CAPACITY = 768;
@@ -247,6 +258,9 @@ const CALABI_YAU_FRAGMENT_SHADER = /* glsl */ `
   uniform float uAmplitude;
   uniform float uOpacity;
   uniform float uInstrumentMix;
+  uniform float uSliceEnabled;
+  uniform float uSliceW;
+  uniform float uSliceBandwidth;
 
   varying vec3 vPosition;
   varying vec3 vNormal;
@@ -284,6 +298,14 @@ const CALABI_YAU_FRAGMENT_SHADER = /* glsl */ `
     float energyGlow = mix(1.0, 0.35 + 0.65 * min(vSheetGain, 2.5), uInstrumentMix);
     float alpha = clamp(uOpacity * (0.45 + fresnel * 0.55 + uAmplitude * 0.35) * energyGlow, 0.04, 0.95);
 
+    if (uSliceEnabled > 0.5) {
+      float wDist = abs(vFourthCoord - uSliceW);
+      float contour = exp(-pow(wDist / max(0.02, uSliceBandwidth * 0.35), 2.0));
+      float slab = smoothstep(uSliceBandwidth * 1.4, uSliceBandwidth * 0.15, wDist);
+      finalColor = mix(finalColor * 0.32, vec3(0.0, 1.0, 0.72), contour * 0.92) + vec3(1.0, 0.88, 0.2) * pow(contour, 3.0);
+      alpha = clamp(alpha * (0.12 + 0.88 * slab) + contour * 0.65, 0.02, 0.98);
+    }
+
     gl_FragColor = vec4(finalColor, alpha);
   }
 `;
@@ -300,10 +322,31 @@ export class CalabiYauCanvas {
     this.simplex = new SimplexNoise3D(42091);
     this.clock = new THREE.Clock();
 
+    this.spaceId = 'calabi-yau-6d';
     this.exponentN = 5;
     this.projectionAngle = 0.68;
     this.gridResolutionU = 18;
     this.gridResolutionV = 18;
+    this.sliceEnabled = false;
+    this.sliceW = 0.0;
+    this.sliceBandwidth = 0.22;
+    this.rot4D = { xw: 0, yw: 0, zw: 0 };
+
+    // Hardware-Adaptive Graphics & Auto-LOD state (RTX 5060 Ti / RTX 4060 G15 / Steam Deck / Low-End)
+    this.graphicsMode = callbacks.graphicsTier || 'auto';
+    this.hardwareDetection = detectLiveHardwareProfile();
+    this.activeGraphicsTierId =
+      this.graphicsMode === 'auto' ? this.hardwareDetection.tierId : this.graphicsMode;
+    this.graphicsProfile = getGraphicsProfile(this.activeGraphicsTierId);
+    this.gridResolutionU = this.graphicsProfile.defaultResolution;
+    this.gridResolutionV = this.graphicsProfile.defaultResolution;
+    this.fpsGovernor = new AdaptiveFpsGovernor({
+      currentTierId: this.activeGraphicsTierId,
+      autoDowngradeEnabled: this.graphicsMode === 'auto',
+    });
+    this.frameCount = 0;
+    this.lastFrameTimeMs = typeof performance !== 'undefined' ? performance.now() : Date.now();
+    this.measuredFps = this.graphicsProfile.targetFps;
 
     this.baseAmplitude = 0.045;
     this.vibrationAmplitude = this.baseAmplitude;
@@ -338,6 +381,16 @@ export class CalabiYauCanvas {
     this.resetSheetField();
 
     this.initScene();
+    // Refine hardware GPU detection using the live WebGL context (unmasked renderer string)
+    this.hardwareDetection = detectLiveHardwareProfile(this.renderer.getContext());
+    if (this.graphicsMode === 'auto') {
+      this.activeGraphicsTierId = this.hardwareDetection.tierId;
+      this.graphicsProfile = getGraphicsProfile(this.activeGraphicsTierId);
+      this.gridResolutionU = this.graphicsProfile.defaultResolution;
+      this.gridResolutionV = this.graphicsProfile.defaultResolution;
+      this.fpsGovernor.setTier(this.activeGraphicsTierId, { autoDowngradeEnabled: true });
+    }
+    this.syncRendererAndBodyToProfile();
     this.buildCalabiYauManifold();
     this.buildQuantumParticleHalo();
     this.bindInteractionEvents();
@@ -355,12 +408,14 @@ export class CalabiYauCanvas {
     this.camera.position.set(0, 0.2, this.cameraDistance);
 
     this.renderer = new THREE.WebGLRenderer({
-      antialias: true,
+      antialias: this.graphicsProfile.antialias,
       alpha: true,
-      powerPreference: 'high-performance',
+      powerPreference: this.graphicsProfile.powerPreference,
     });
     this.renderer.setSize(width, height);
-    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    this.renderer.setPixelRatio(
+      Math.min(window.devicePixelRatio || 1, this.graphicsProfile.pixelRatioCap)
+    );
     this.renderer.setClearColor(0x000000, 0);
 
     this.container.innerHTML = '';
@@ -370,6 +425,63 @@ export class CalabiYauCanvas {
     this.manifoldGroup.rotation.x = this.manualRotation.x;
     this.manifoldGroup.rotation.y = this.manualRotation.y;
     this.scene.add(this.manifoldGroup);
+  }
+
+  syncRendererAndBodyToProfile() {
+    if (this.renderer) {
+      const dpr = typeof window !== 'undefined' ? window.devicePixelRatio || 1 : 1;
+      this.renderer.setPixelRatio(Math.min(dpr, this.graphicsProfile.pixelRatioCap));
+      const width = this.container?.clientWidth || window.innerWidth;
+      const height = this.container?.clientHeight || window.innerHeight;
+      this.renderer.setSize(width, height);
+    }
+    if (typeof document !== 'undefined' && document.body) {
+      document.body.classList.toggle('gfx-reduced-blur', Boolean(this.graphicsProfile.reducedCssBlur));
+      document.body.classList.toggle('gfx-steamdeck', this.activeGraphicsTierId === 'steam-deck');
+      document.body.classList.toggle('gfx-low', this.activeGraphicsTierId === 'low');
+    }
+  }
+
+  setGraphicsTier(modeOrTierId = 'auto', { forcedAutoTier = null } = {}) {
+    this.graphicsMode = modeOrTierId;
+    if (modeOrTierId === 'auto') {
+      this.activeGraphicsTierId = forcedAutoTier || this.hardwareDetection.tierId || 'high';
+      this.fpsGovernor.setTier(this.activeGraphicsTierId, { autoDowngradeEnabled: true });
+    } else {
+      this.activeGraphicsTierId = GRAPHICS_PROFILES[modeOrTierId] ? modeOrTierId : 'high';
+      this.fpsGovernor.setTier(this.activeGraphicsTierId, { autoDowngradeEnabled: false });
+    }
+
+    this.graphicsProfile = getGraphicsProfile(this.activeGraphicsTierId);
+    this.gridResolutionU = this.graphicsProfile.defaultResolution;
+    this.gridResolutionV = this.graphicsProfile.defaultResolution;
+    if (this.exponentN > this.graphicsProfile.maxExponentN) {
+      this.exponentN = this.graphicsProfile.maxExponentN;
+    }
+
+    this.syncRendererAndBodyToProfile();
+    this.resetSheetField();
+    this.buildCalabiYauManifold();
+    this.buildQuantumParticleHalo();
+
+    const status = this.getGraphicsStatus();
+    if (typeof this.callbacks.onGraphicsProfileChange === 'function') {
+      this.callbacks.onGraphicsProfileChange(status);
+    }
+    return status;
+  }
+
+  getGraphicsStatus() {
+    return {
+      mode: this.graphicsMode,
+      tierId: this.activeGraphicsTierId,
+      profile: this.graphicsProfile,
+      detectedHardware: this.hardwareDetection.detectedHardware,
+      rendererString: this.hardwareDetection.rendererString,
+      measuredFps: this.measuredFps,
+      resolution: this.gridResolutionU,
+      exponentN: this.exponentN,
+    };
   }
 
   /**
@@ -418,7 +530,13 @@ export class CalabiYauCanvas {
             const v = iv / vSteps;
             const b = bMin + v * (bMax - bMin);
 
-            const pt = evaluateCalabiYauPoint(a, b, k1, k2, n, xi);
+            const pt =
+              this.spaceId === 'calabi-yau-6d' &&
+              !this.rot4D.xw &&
+              !this.rot4D.yw &&
+              !this.rot4D.zw
+                ? evaluateCalabiYauPoint(a, b, k1, k2, n, xi)
+                : evaluateDimensionalPoint(this.spaceId, u, v, k1, k2, n, xi, this.rot4D);
 
             positions.push(pt.x * scale, pt.y * scale, pt.z * scale);
             fourthCoords.push(pt.w4);
@@ -470,6 +588,9 @@ export class CalabiYauCanvas {
       uSheetColor: { value: this.displaySheetColor },
       uSheetCount: { value: n * n },
       uInstrumentMix: { value: this.instrumentMix },
+      uSliceEnabled: { value: this.sliceEnabled ? 1.0 : 0.0 },
+      uSliceW: { value: this.sliceW },
+      uSliceBandwidth: { value: this.sliceBandwidth },
     };
 
     const wireframeMaterial = new THREE.ShaderMaterial({
@@ -496,28 +617,43 @@ export class CalabiYauCanvas {
       uSheetColor: this.shaderUniforms.uSheetColor,
       uSheetCount: this.shaderUniforms.uSheetCount,
       uInstrumentMix: this.shaderUniforms.uInstrumentMix,
+      uSliceEnabled: this.shaderUniforms.uSliceEnabled,
+      uSliceW: this.shaderUniforms.uSliceW,
+      uSliceBandwidth: this.shaderUniforms.uSliceBandwidth,
     };
 
-    const coreMaterial = new THREE.ShaderMaterial({
-      vertexShader: CALABI_YAU_VERTEX_SHADER,
-      fragmentShader: CALABI_YAU_FRAGMENT_SHADER,
-      uniforms: coreUniforms,
-      wireframe: false,
-      transparent: true,
-      blending: THREE.AdditiveBlending,
-      depthWrite: false,
-      side: THREE.DoubleSide,
-    });
+    if (this.graphicsProfile?.coreSurfaceEnabled !== false) {
+      const coreMaterial = new THREE.ShaderMaterial({
+        vertexShader: CALABI_YAU_VERTEX_SHADER,
+        fragmentShader: CALABI_YAU_FRAGMENT_SHADER,
+        uniforms: coreUniforms,
+        wireframe: false,
+        transparent: true,
+        blending: THREE.AdditiveBlending,
+        depthWrite: false,
+        side: THREE.DoubleSide,
+      });
 
-    this.coreSurfaceMesh = new THREE.Mesh(geometry, coreMaterial);
-    this.manifoldGroup.add(this.coreSurfaceMesh);
+      this.coreSurfaceMesh = new THREE.Mesh(geometry, coreMaterial);
+      this.manifoldGroup.add(this.coreSurfaceMesh);
+    } else {
+      this.coreSurfaceMesh = null;
+    }
   }
 
   /**
    * Creates a subtle ambient field of higher-dimensional phase particles around the manifold.
+   * Scales particle count automatically by hardware tier (950 on RTX 5060 Ti -> 520 on RTX 4060 G15 -> 200 on Steam Deck -> 80 on Low-End).
    */
   buildQuantumParticleHalo() {
-    const particleCount = 650;
+    if (this.particleHalo) {
+      this.scene.remove(this.particleHalo);
+      this.particleHalo.geometry.dispose();
+      this.particleHalo.material.dispose();
+      this.particleHalo = null;
+    }
+    const particleCount = this.graphicsProfile?.haloParticles ?? 520;
+    if (particleCount <= 0) return;
     const positions = new Float32Array(particleCount * 3);
     const colors = new Float32Array(particleCount * 3);
 
@@ -736,7 +872,8 @@ export class CalabiYauCanvas {
       this.trajectories.set(runId, entry);
     }
 
-    const pts = points.slice(-TRAJECTORY_CAPACITY);
+    const cap = this.graphicsProfile?.trajectoryCapacity || TRAJECTORY_CAPACITY;
+    const pts = points.slice(-cap);
     const pos = entry.line.geometry.attributes.position;
     const col = entry.line.geometry.attributes.color;
     const c = new THREE.Color(color);
@@ -780,12 +917,32 @@ export class CalabiYauCanvas {
     return this.gridResolutionU;
   }
 
+  get dimensionSpaceId() {
+    return this.spaceId;
+  }
+
   /**
-   * Updates Calabi-Yau mathematical parameters (Fermat degree n or 4D phase angle xi)
-   * and rebuilds the manifold geometry dynamically.
+   * Updates N-dimensional space, Fermat degree n, 4D phase angle xi, 4D hyperplane slice,
+   * or 4D rotation angles and rebuilds the manifold geometry dynamically.
    */
-  setManifoldParameters({ exponentN, projectionAngle, resolution }) {
+  setManifoldParameters({
+    spaceId,
+    dimensionSpaceId,
+    exponentN,
+    projectionAngle,
+    resolution,
+    sliceEnabled,
+    sliceW,
+    sliceBandwidth,
+    rot4D,
+  }) {
     let needsRebuild = false;
+    const nextSpaceId = spaceId || dimensionSpaceId;
+
+    if (typeof nextSpaceId === 'string' && nextSpaceId !== this.spaceId) {
+      this.spaceId = getDimensionSpace(nextSpaceId).id;
+      needsRebuild = true;
+    }
 
     if (Number.isInteger(exponentN) && exponentN >= 2 && exponentN <= 7 && exponentN !== this.exponentN) {
       this.exponentN = exponentN;
@@ -803,11 +960,38 @@ export class CalabiYauCanvas {
       needsRebuild = true;
     }
 
+    if (rot4D && typeof rot4D === 'object') {
+      const next = { ...this.rot4D, ...rot4D };
+      if (next.xw !== this.rot4D.xw || next.yw !== this.rot4D.yw || next.zw !== this.rot4D.zw) {
+        this.rot4D = next;
+        needsRebuild = true;
+      }
+    }
+
+    if (typeof sliceEnabled === 'boolean') {
+      this.sliceEnabled = sliceEnabled;
+      if (this.shaderUniforms) this.shaderUniforms.uSliceEnabled.value = sliceEnabled ? 1.0 : 0.0;
+    }
+
+    if (typeof sliceW === 'number' && Number.isFinite(sliceW)) {
+      this.sliceW = sliceW;
+      if (this.shaderUniforms) this.shaderUniforms.uSliceW.value = sliceW;
+    }
+
+    if (typeof sliceBandwidth === 'number' && Number.isFinite(sliceBandwidth)) {
+      this.sliceBandwidth = sliceBandwidth;
+      if (this.shaderUniforms) this.shaderUniforms.uSliceBandwidth.value = sliceBandwidth;
+    }
+
     if (needsRebuild) {
       this.resetSheetField();
       this.clearTrajectories();
       this.buildCalabiYauManifold();
     }
+  }
+
+  getActiveInvariants() {
+    return computeTopologicalInvariants(this.spaceId, { exponentN: this.exponentN });
   }
 
   /**
@@ -818,6 +1002,38 @@ export class CalabiYauCanvas {
   applyManifoldDirective(directiveText = '') {
     const text = directiveText.toLowerCase();
     const applied = {};
+
+    if (text.includes('tesseract') || text.includes('hypercube') || text.includes('8-cell')) {
+      this.spaceId = 'tesseract-4d';
+      applied.spaceId = this.spaceId;
+    } else if (text.includes('24-cell') || text.includes('icositetrachoron')) {
+      this.spaceId = '24-cell-4d';
+      applied.spaceId = this.spaceId;
+    } else if (text.includes('hopf')) {
+      this.spaceId = 'hopf-fibration-4d';
+      applied.spaceId = this.spaceId;
+    } else if (text.includes('clifford')) {
+      this.spaceId = 'clifford-torus-4d';
+      applied.spaceId = this.spaceId;
+    } else if (text.includes('klein')) {
+      this.spaceId = 'klein-bottle-4d';
+      applied.spaceId = this.spaceId;
+    } else if (text.includes('kaluza')) {
+      this.spaceId = 'kaluza-klein-5d';
+      applied.spaceId = this.spaceId;
+    } else if (text.includes('g2') || text.includes('joyce') || text.includes('octonion')) {
+      this.spaceId = 'g2-manifold-7d';
+      applied.spaceId = this.spaceId;
+    } else if (text.includes('e8') || text.includes('240 root')) {
+      this.spaceId = 'e8-lattice-8d';
+      applied.spaceId = this.spaceId;
+    } else if (text.includes('11d') || text.includes('m-theory') || text.includes('horava')) {
+      this.spaceId = 'm-theory-11d';
+      applied.spaceId = this.spaceId;
+    } else if (text.includes('10d') || text.includes('mirror quintic')) {
+      this.spaceId = 'superstring-10d';
+      applied.spaceId = this.spaceId;
+    }
 
     if (text.includes('euler') || text.includes('math.e') || text.includes('2.718')) {
       this.projectionAngle = Math.E;
@@ -908,6 +1124,17 @@ export class CalabiYauCanvas {
   animate() {
     this.animationFrameId = requestAnimationFrame(() => this.animate());
 
+    const nowMs = typeof performance !== 'undefined' ? performance.now() : Date.now();
+    const dtMs = nowMs - this.lastFrameTimeMs;
+    this.lastFrameTimeMs = nowMs;
+    this.frameCount += 1;
+
+    const gov = this.fpsGovernor.recordFrame(dtMs);
+    this.measuredFps = gov.fps;
+    if (gov.downgradedTo && this.graphicsMode === 'auto') {
+      this.setGraphicsTier('auto', { forcedAutoTier: gov.downgradedTo });
+    }
+
     const elapsedTime = this.clock.getElapsedTime();
 
     this.targetAmplitude += (this.baseAmplitude - this.targetAmplitude) * 0.055;
@@ -929,7 +1156,10 @@ export class CalabiYauCanvas {
       this.displaySheetColor[i] += (this.targetSheetColor[i] - this.displaySheetColor[i]) * 0.15;
     }
 
-    this.updateVertexDeformation(elapsedTime);
+    const deformStride = this.graphicsProfile?.cpuDeformStride || 1;
+    if (this.frameCount % deformStride === 0) {
+      this.updateVertexDeformation(elapsedTime);
+    }
 
     if (this.shaderUniforms) {
       this.shaderUniforms.uTime.value = elapsedTime;

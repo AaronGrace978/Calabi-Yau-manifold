@@ -4,6 +4,16 @@ import { appWindow } from '@tauri-apps/api/window';
 import { CalabiYauCanvas } from './CalabiYauCanvas.js';
 import { AI_PROVIDERS } from './providers.js';
 import { InstrumentConsole, LANE_COLORS } from './instrumentConsole.js';
+import { DIMENSION_CATALOG } from './dimensions/dimensionalEngine.js';
+import {
+  compileApplicationProject,
+  runAutonomousBuildLoop,
+  isApplicationBuildPrompt,
+  buildMultiFileSystemPrompt,
+  analyzeBuildIntent,
+  generateFrontierWitnessDossierHtml,
+  mintProofCarryingCertificate,
+} from './builder/index.js';
 
 const isTauriDesktop =
   typeof window !== 'undefined' &&
@@ -253,12 +263,25 @@ const dom = {
   barAmplitude: document.getElementById('bar-amplitude'),
   manifoldEquation: document.getElementById('manifold-equation'),
   sparklineCanvas: document.getElementById('harmonic-sparkline'),
+  dimensionSpaceSelect: document.getElementById('dimension-space-select'),
+  valDimensionBadge: document.getElementById('val-dimension-badge'),
   sliderExponent: document.getElementById('slider-exponent'),
   sliderPhase: document.getElementById('slider-phase'),
   sliderResolution: document.getElementById('slider-resolution'),
+  checkSliceEnabled: document.getElementById('check-slice-enabled'),
+  sliderSliceW: document.getElementById('slider-slice-w'),
+  valSliceW: document.getElementById('val-slice-w'),
   valExponent: document.getElementById('val-exponent'),
   valPhase: document.getElementById('val-phase'),
   valResolution: document.getElementById('val-resolution'),
+  graphicsProfileSelect: document.getElementById('graphics-profile-select'),
+  valGraphicsBadge: document.getElementById('val-graphics-badge'),
+  dimensionInvariantsPanel: document.getElementById('dimension-invariants-panel'),
+  dimensionalInvariants: document.getElementById('dimension-invariants-panel'),
+  homologyBarcode: document.getElementById('homology-barcode'),
+  frontierWitnessPanel: document.getElementById('frontier-witness-panel'),
+  btnWitnessDossier: document.getElementById('btn-witness-dossier'),
+  btnOpenWitnessDossier: document.getElementById('btn-open-witness-dossier'),
   btnToggleConfig: document.getElementById('btn-toggle-config'),
   btnSyncModels: document.getElementById('btn-sync-models'),
   btnBuildLauncher: document.getElementById('btn-build-launcher'),
@@ -283,7 +306,19 @@ const dom = {
   buildLauncherModal: document.getElementById('build-launcher-modal'),
   launcherTitle: document.getElementById('launcher-title'),
   launcherStatusPill: document.getElementById('launcher-status-pill'),
+  builderGuardrailSelect: document.getElementById('builder-guardrail-select'),
+  builderTemplateSelect: document.getElementById('builder-template-select'),
+  builderPromptInput: document.getElementById('builder-prompt-input'),
+  btnBuilderSynthesize: document.getElementById('btn-builder-synthesize'),
+  builderNoveltyBadge: document.getElementById('builder-novelty-badge'),
+  builderStagesLog: document.getElementById('builder-stages-log'),
+  activeBuildSlug: document.getElementById('active-build-slug'),
+  projectFilesTabs: document.getElementById('project-files-tabs'),
+  pcCommandInput: document.getElementById('pc-command-input'),
+  btnRunPcCmd: document.getElementById('btn-run-pc-cmd'),
+  pcCommandOutput: document.getElementById('pc-command-output'),
   btnLauncherPreset: document.getElementById('btn-launcher-preset'),
+  btnLauncherWitness: document.getElementById('btn-launcher-witness'),
   btnLauncherSaveDisk: document.getElementById('btn-launcher-save-disk'),
   btnLauncherNativeWin: document.getElementById('btn-launcher-native-win'),
   btnLauncherDownload: document.getElementById('btn-launcher-download'),
@@ -537,9 +572,21 @@ function renderTelemetry({ infoRate, amplitude, saturation, tokensPerSec }) {
   flashBeacon();
 }
 
+const GRAPHICS_STORAGE_KEY = 'calabi_yau_graphics_tier_v1';
+let savedGraphicsTier = 'auto';
+try {
+  savedGraphicsTier = localStorage.getItem(GRAPHICS_STORAGE_KEY) || 'auto';
+} catch {
+  savedGraphicsTier = 'auto';
+}
+
 const calabiYau = new CalabiYauCanvas(dom.viewport, {
+  graphicsTier: savedGraphicsTier,
   onQuantumTelemetry({ amplitude, saturation }) {
     renderTelemetry({ amplitude, saturation });
+  },
+  onGraphicsProfileChange() {
+    syncManifoldSlidersToCanvas();
   },
 });
 
@@ -558,6 +605,18 @@ const instrumentConsole = new InstrumentConsole({
 
 const superscriptDigits = ['⁰', '¹', '²', '³', '⁴', '⁵', '⁶', '⁷', '⁸', '⁹'];
 
+function populateDimensionCatalog() {
+  if (!dom.dimensionSpaceSelect) return;
+  dom.dimensionSpaceSelect.innerHTML = '';
+  for (const space of DIMENSION_CATALOG) {
+    const opt = document.createElement('option');
+    opt.value = space.id;
+    opt.textContent = `${space.dimension}D // ${space.name}`;
+    dom.dimensionSpaceSelect.appendChild(opt);
+  }
+  dom.dimensionSpaceSelect.value = calabiYau.dimensionSpaceId || 'calabi-yau-6d';
+}
+
 function syncManifoldSlidersToCanvas() {
   const n = calabiYau.exponentN;
   const xi = calabiYau.projectionAngle;
@@ -566,34 +625,118 @@ function syncManifoldSlidersToCanvas() {
   dom.sliderExponent.value = String(n);
   dom.valExponent.textContent = `${n} (${n * n} sheets)`;
   const sup = superscriptDigits[n] || `^${n}`;
-  dom.manifoldEquation.textContent = `z₁${sup} + z₂${sup} = 1`;
+
+  const activeSpace =
+    DIMENSION_CATALOG.find((s) => s.id === calabiYau.dimensionSpaceId) || DIMENSION_CATALOG[0];
+  if (dom.dimensionSpaceSelect) {
+    dom.dimensionSpaceSelect.value = activeSpace.id;
+  }
+  if (dom.valDimensionBadge) {
+    dom.valDimensionBadge.textContent = activeSpace.shortLabel;
+  }
+  dom.manifoldEquation.textContent =
+    activeSpace.id === 'calabi-yau-6d' ? `z₁${sup} + z₂${sup} = 1` : activeSpace.symbol;
 
   dom.sliderPhase.value = String(xi.toFixed(4));
   dom.valPhase.textContent = `${xi.toFixed(2)} rad`;
 
   dom.sliderResolution.value = String(res);
   dom.valResolution.textContent = `${res}×${res}`;
+
+  if (dom.checkSliceEnabled) {
+    dom.checkSliceEnabled.checked = Boolean(calabiYau.sliceEnabled);
+  }
+  if (dom.sliderSliceW) {
+    dom.sliderSliceW.value = String(calabiYau.sliceW || 0);
+  }
+  if (dom.valSliceW) {
+    dom.valSliceW.textContent = calabiYau.sliceEnabled
+      ? `w₄ = ${(calabiYau.sliceW || 0).toFixed(2)}`
+      : 'OFF (FULL)';
+  }
+
+  if (calabiYau.getGraphicsStatus) {
+    const gfx = calabiYau.getGraphicsStatus();
+    if (dom.graphicsProfileSelect) {
+      dom.graphicsProfileSelect.value = gfx.mode || 'auto';
+    }
+    if (dom.valGraphicsBadge) {
+      const prefix = gfx.mode === 'auto' ? 'AUTO: ' : '';
+      dom.valGraphicsBadge.textContent = `${prefix}${gfx.profile.shortLabel}`;
+      dom.valGraphicsBadge.title = `${gfx.detectedHardware} — ${gfx.profile.description}`;
+    }
+  }
+
+  instrumentConsole.setDimensionConfig({
+    spaceId: activeSpace.id,
+    exponentN: n,
+    sliceEnabled: Boolean(calabiYau.sliceEnabled),
+    sliceW: Number(calabiYau.sliceW || 0),
+    rotXW: xi * 0.5,
+  });
+}
+
+populateDimensionCatalog();
+syncManifoldSlidersToCanvas();
+
+if (dom.dimensionSpaceSelect) {
+  dom.dimensionSpaceSelect.addEventListener('change', (e) => {
+    const spaceId = e.target.value;
+    calabiYau.setManifoldParameters({ dimensionSpaceId: spaceId });
+    syncManifoldSlidersToCanvas();
+  });
+}
+
+if (dom.checkSliceEnabled) {
+  dom.checkSliceEnabled.addEventListener('change', (e) => {
+    const enabled = Boolean(e.target.checked);
+    const w = parseFloat(dom.sliderSliceW?.value || '0') || 0;
+    calabiYau.setManifoldParameters({ sliceEnabled: enabled, sliceW: w });
+    syncManifoldSlidersToCanvas();
+  });
+}
+
+if (dom.sliderSliceW) {
+  dom.sliderSliceW.addEventListener('input', (e) => {
+    const w = parseFloat(e.target.value) || 0;
+    if (dom.checkSliceEnabled && !dom.checkSliceEnabled.checked) {
+      dom.checkSliceEnabled.checked = true;
+    }
+    calabiYau.setManifoldParameters({ sliceEnabled: true, sliceW: w });
+    syncManifoldSlidersToCanvas();
+  });
 }
 
 dom.sliderExponent.addEventListener('input', (e) => {
   const n = parseInt(e.target.value, 10);
-  dom.valExponent.textContent = `${n} (${n * n} sheets)`;
-  const sup = superscriptDigits[n] || `^${n}`;
-  dom.manifoldEquation.textContent = `z₁${sup} + z₂${sup} = 1`;
   calabiYau.setManifoldParameters({ exponentN: n });
+  syncManifoldSlidersToCanvas();
 });
 
 dom.sliderPhase.addEventListener('input', (e) => {
   const xi = parseFloat(e.target.value);
-  dom.valPhase.textContent = `${xi.toFixed(2)} rad`;
   calabiYau.setManifoldParameters({ projectionAngle: xi });
+  syncManifoldSlidersToCanvas();
 });
 
 dom.sliderResolution.addEventListener('input', (e) => {
   const res = parseInt(e.target.value, 10);
-  dom.valResolution.textContent = `${res}×${res}`;
   calabiYau.setManifoldParameters({ resolution: res });
+  syncManifoldSlidersToCanvas();
 });
+
+if (dom.graphicsProfileSelect) {
+  dom.graphicsProfileSelect.addEventListener('change', (e) => {
+    const modeOrTier = e.target.value || 'auto';
+    try {
+      localStorage.setItem(GRAPHICS_STORAGE_KEY, modeOrTier);
+    } catch {
+      // Ignore storage errors
+    }
+    calabiYau.setGraphicsTier(modeOrTier);
+    syncManifoldSlidersToCanvas();
+  });
+}
 
 dom.btnToggleLayout.addEventListener('click', () => {
   dom.workspaceGrid.classList.toggle('canvas-expanded');
@@ -627,38 +770,196 @@ if (isTauriDesktop) {
 }
 
 // ============================================================================
-// BUILD LAUNCHER & NATIVE MACHINE FILESYSTEM HARNESS
+// AUTONOMOUS MULTI-FILE APPLICATION BUILDER & GUARDED PC HARNESS
 // ============================================================================
 
-let currentSandboxTitle = 'fermat-quintic-euler-05thz';
+const LOCAL_BUILDS_HISTORY_KEY = 'calabi_yau_multifile_builds_v2';
+let currentSandboxTitle = 'quantum-telemetry-workbench';
+let activeCompiledProject = null;
+let activeSelectedFilePath = 'index.html';
+
+function getSavedBuildHistory() {
+  try {
+    const raw = localStorage.getItem(LOCAL_BUILDS_HISTORY_KEY);
+    const parsed = raw ? JSON.parse(raw) : [];
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+function saveBuildToHistory(projectRecord) {
+  try {
+    const history = getSavedBuildHistory().filter((b) => b.slug !== projectRecord.slug);
+    history.unshift({
+      slug: projectRecord.slug,
+      title: projectRecord.title,
+      prompt: projectRecord.prompt,
+      templateId: projectRecord.templateId || projectRecord.template,
+      templateLabel: projectRecord.templateLabel || projectRecord.template,
+      entryFile: projectRecord.entryFile || 'index.html',
+      directory: projectRecord.directory || `~/CalabiYauProjects/builds/${projectRecord.slug}`,
+      createdAtMs: projectRecord.createdAtMs || Date.now(),
+      totalBytes: projectRecord.totalBytes || 0,
+      files: projectRecord.files || [],
+      previewHtml: projectRecord.previewHtml || '',
+      novelty: projectRecord.novelty || null,
+    });
+    localStorage.setItem(LOCAL_BUILDS_HISTORY_KEY, JSON.stringify(history.slice(0, 30)));
+  } catch {
+    // Ignore storage quota issues
+  }
+}
 
 /**
- * Wraps raw GLSL or JS snippets into a runnable HTML document if the code block
- * is not already a full HTML document.
+ * Wraps raw HTML, JS, or multi-file project code into a runnable HTML document.
+ * Crucially, never silently defaults to the old hardcoded Fermat quintic build when a user
+ * builds a new application `X`.
  */
-function ensureRunnableHtmlDocument(code, lang = 'html') {
+function ensureRunnableHtmlDocument(code, lang = 'html', fallbackPrompt = '') {
   const trimmed = (code || '').trim();
   if (/<!doctype html>|<html[\s>]/i.test(trimmed)) {
     return trimmed;
   }
   if (lang === 'javascript' || lang === 'js') {
-    return `<!DOCTYPE html><html><head><meta charset="UTF-8"><style>body{margin:0;background:#000;color:#0ff;font-family:monospace;}</style></head><body><script type="module">\n${trimmed}\n</script></body></html>`;
+    return `<!DOCTYPE html><html><head><meta charset="UTF-8"><style>body{margin:0;background:#050914;color:#0ff;font-family:monospace;padding:16px;}</style></head><body><script type="module">\n${trimmed}\n</script></body></html>`;
+  }
+  if (fallbackPrompt) {
+    const synthesized = compileApplicationProject(fallbackPrompt, {
+      previousBuilds: getSavedBuildHistory(),
+    });
+    return synthesized.previewHtml;
   }
   return DEFAULT_EULER_QUINTIC_BUILD_HTML;
 }
 
-function runCodeInSandbox(rawCode, title = 'calabi-yau-shader-build') {
-  currentSandboxTitle = title;
-  const runnableHtml = ensureRunnableHtmlDocument(rawCode);
-  dom.launcherSourceEditor.value = runnableHtml;
-  dom.sandboxIframe.srcdoc = runnableHtml;
-  dom.launcherTitle.textContent = `LIVE WEBGL BUILD // ${title.toUpperCase()}`;
+function renderProjectFileTabs(project) {
+  if (!dom.projectFilesTabs || !project || !Array.isArray(project.files)) return;
+  dom.projectFilesTabs.innerHTML = '';
+  if (dom.activeBuildSlug) {
+    dom.activeBuildSlug.textContent = project.slug || 'live-build';
+  }
+
+  for (const file of project.files) {
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    const isSelected = file.path === activeSelectedFilePath;
+    btn.className = `mini-link-btn${isSelected ? ' active' : ''}`;
+    btn.style.border = isSelected
+      ? '1px solid #00f3ff'
+      : '1px solid rgba(255,255,255,0.14)';
+    btn.style.padding = '2px 7px';
+    btn.style.borderRadius = '4px';
+    btn.textContent = file.path;
+    btn.addEventListener('click', () => {
+      if (activeCompiledProject) {
+        const prevFile = activeCompiledProject.files.find((f) => f.path === activeSelectedFilePath);
+        if (prevFile) {
+          prevFile.content = dom.launcherSourceEditor.value;
+        }
+      }
+      activeSelectedFilePath = file.path;
+      dom.launcherSourceEditor.value = file.content;
+      renderProjectFileTabs(activeCompiledProject);
+    });
+    dom.projectFilesTabs.appendChild(btn);
+  }
 }
 
-function openBuildLauncher(codeToRun = null, title = 'fermat-quintic-euler-05thz') {
+function renderBuildStagesLog(stages = [], novelty = null) {
+  if (!dom.builderStagesLog) return;
+  dom.builderStagesLog.innerHTML = '';
+  if (dom.builderNoveltyBadge && novelty) {
+    dom.builderNoveltyBadge.textContent = novelty.isNovel
+      ? `NOVEL BUILD #${novelty.fingerprint}`
+      : `UPDATED #${novelty.fingerprint}`;
+  }
+  for (const st of stages) {
+    const row = document.createElement('div');
+    row.style.padding = '3px 6px';
+    row.style.borderBottom = '1px solid rgba(255,255,255,0.06)';
+    const color = st.status === 'PASS' ? '#38ef7d' : '#ffb84d';
+    row.innerHTML = `<strong style="color:${color};">[${st.status}]</strong> <span>${st.label}:</span> <span style="color:#8ea4c8;">${st.detail}</span>`;
+    dom.builderStagesLog.appendChild(row);
+  }
+}
+
+function loadCompiledProjectIntoStudio(project) {
+  activeCompiledProject = project;
+  currentSandboxTitle = project.slug;
+  activeSelectedFilePath = project.entryFile || project.files?.[0]?.path || 'index.html';
+
+  const entryFileObj =
+    project.files?.find((f) => f.path === activeSelectedFilePath) || project.files?.[0];
+  dom.launcherSourceEditor.value = entryFileObj ? entryFileObj.content : project.previewHtml || '';
+
+  const runnableHtml =
+    project.previewHtml ||
+    (entryFileObj && /\.html?$/i.test(entryFileObj.path)
+      ? entryFileObj.content
+      : ensureRunnableHtmlDocument(entryFileObj?.content || '', 'html', project.prompt));
+
+  dom.sandboxIframe.srcdoc = runnableHtml;
+  dom.launcherTitle.textContent = `APP BUILDER // ${project.title.toUpperCase()} (${project.templateId.toUpperCase()})`;
+  dom.launcherStatusPill.textContent = project.directory || `~/CalabiYauProjects/builds/${project.slug}`;
+  if (dom.pcCommandInput && project.verifyCommand) {
+    dom.pcCommandInput.value = project.verifyCommand;
+  }
+
+  renderProjectFileTabs(project);
+  if (project.stages) {
+    renderBuildStagesLog(project.stages, project.novelty);
+  }
+}
+
+function runCodeInSandbox(rawCode, title = 'custom-live-build', fallbackPrompt = '') {
+  currentSandboxTitle = title;
+  const runnableHtml = ensureRunnableHtmlDocument(rawCode, 'html', fallbackPrompt);
+  dom.launcherSourceEditor.value = runnableHtml;
+  dom.sandboxIframe.srcdoc = runnableHtml;
+  dom.launcherTitle.textContent = `LIVE BUILD // ${title.toUpperCase()}`;
+}
+
+async function executeAutonomousBuildFromPrompt(promptText, templateOverride = 'auto', llmResponseText = '') {
+  const guardrailMode = dom.builderGuardrailSelect?.value || 'workspace-guarded';
+  const previousBuilds = getSavedBuildHistory();
+
+  const builtProject = await runAutonomousBuildLoop({
+    prompt: promptText,
+    templateId: templateOverride,
+    llmResponseText,
+    guardrailMode,
+    previousBuilds,
+    tauriInvoke: isTauriDesktop ? invoke : null,
+    onStageUpdate(_stage, allStages) {
+      renderBuildStagesLog(allStages);
+    },
+  });
+
+  saveBuildToHistory(builtProject);
+  loadCompiledProjectIntoStudio(builtProject);
+  await refreshSavedMachineProjects();
+  return builtProject;
+}
+
+function openBuildLauncher(codeToRun = null, title = null, projectObject = null) {
   dom.buildLauncherModal.classList.remove('hidden');
-  const source = codeToRun || dom.launcherSourceEditor.value.trim() || DEFAULT_EULER_QUINTIC_BUILD_HTML;
-  runCodeInSandbox(source, title);
+  if (projectObject && projectObject.files) {
+    loadCompiledProjectIntoStudio(projectObject);
+  } else if (codeToRun) {
+    runCodeInSandbox(codeToRun, title || `build-${Date.now()}`);
+  } else if (!activeCompiledProject) {
+    const history = getSavedBuildHistory();
+    if (history.length > 0 && history[0].files?.length) {
+      loadCompiledProjectIntoStudio(history[0]);
+    } else {
+      const initialProject = compileApplicationProject(
+        'Build an Electron desktop Quantum Manifold & Higher-Dimensional Telemetry Studio',
+        { templateId: 'electron-desktop' }
+      );
+      loadCompiledProjectIntoStudio(initialProject);
+    }
+  }
   refreshSavedMachineProjects();
 }
 
@@ -698,11 +999,38 @@ function triggerBrowserDownload(filename, content) {
 }
 
 /**
- * Saves an artifact directly to `~/CalabiYauProjects` via the Tauri Rust filesystem harness,
- * and also stores a copy in local project storage (plus optional file download in browser mode).
+ * Saves an artifact or full multi-file project directly to `~/CalabiYauProjects/builds/<slug>`
+ * via the Tauri Rust filesystem harness, and stores a copy in local project storage.
  */
 async function saveArtifactToMachine(filename, content, extension = 'html') {
   const cleanName = filename || `calabi-yau-build-${Date.now()}`;
+  const guardrailMode = dom.builderGuardrailSelect?.value || 'workspace-guarded';
+
+  if (activeCompiledProject && activeCompiledProject.slug === cleanName) {
+    const activeFile = activeCompiledProject.files.find((f) => f.path === activeSelectedFilePath);
+    if (activeFile) activeFile.content = content;
+    saveBuildToHistory(activeCompiledProject);
+
+    if (isTauriDesktop) {
+      const record = await invoke('write_build_project', {
+        slug: activeCompiledProject.slug,
+        title: activeCompiledProject.title,
+        template: activeCompiledProject.templateId,
+        prompt: activeCompiledProject.prompt,
+        entryFile: activeCompiledProject.entryFile,
+        files: activeCompiledProject.files,
+        guardrailMode,
+      });
+      await refreshSavedMachineProjects();
+      return {
+        filename: record.slug,
+        path: record.directory,
+        bytes: record.totalBytes,
+        directory: record.directory,
+      };
+    }
+  }
+
   if (isTauriDesktop) {
     const info = await invoke('save_artifact_to_disk', {
       filename: cleanName,
@@ -721,12 +1049,12 @@ async function saveArtifactToMachine(filename, content, extension = 'html') {
     const finalName = cleanName.endsWith(`.${extension}`)
       ? cleanName
       : `${cleanName}.${extension}`;
-    const virtualPath = `~/CalabiYauProjects/${finalName}`;
+    const virtualPath = `~/CalabiYauProjects/builds/${cleanName}/${finalName}`;
     const info = {
       filename: finalName,
       path: virtualPath,
       bytes: new Blob([content]).size,
-      directory: '~/CalabiYauProjects',
+      directory: `~/CalabiYauProjects/builds/${cleanName}`,
     };
     saveLocalFallbackProject({ ...info, content });
     triggerBrowserDownload(finalName, content);
@@ -739,7 +1067,7 @@ async function spawnNativeArtifactWindow(title, htmlContent, filename) {
   if (isTauriDesktop) {
     const info = await invoke('launch_artifact_window', {
       title,
-      htmlContent: ensureRunnableHtmlDocument(htmlContent),
+      htmlContent: ensureRunnableHtmlDocument(htmlContent, 'html', title),
       filename: filename || currentSandboxTitle,
     });
     await refreshSavedMachineProjects();
@@ -748,7 +1076,7 @@ async function spawnNativeArtifactWindow(title, htmlContent, filename) {
     openBuildLauncher(htmlContent, title);
     return {
       filename: `${filename || 'build'}.html`,
-      path: '~/CalabiYauProjects (Sandbox Active)',
+      path: `~/CalabiYauProjects/builds/${filename || currentSandboxTitle}`,
       bytes: htmlContent.length,
     };
   }
@@ -756,32 +1084,33 @@ async function spawnNativeArtifactWindow(title, htmlContent, filename) {
 
 async function refreshSavedMachineProjects() {
   dom.savedProjectsList.innerHTML = '';
-  let items = [];
+  let buildRecords = [];
 
   if (isTauriDesktop) {
     try {
-      items = await invoke('list_saved_artifacts');
+      buildRecords = await invoke('list_build_projects');
     } catch {
-      items = getLocalFallbackProjects();
+      buildRecords = getSavedBuildHistory();
     }
   } else {
-    items = getLocalFallbackProjects();
+    buildRecords = getSavedBuildHistory();
   }
 
-  if (!items || items.length === 0) {
+  const legacyItems = getLocalFallbackProjects();
+
+  if ((!buildRecords || buildRecords.length === 0) && legacyItems.length === 0) {
     const empty = document.createElement('div');
     empty.className = 'saved-project-empty';
     empty.innerHTML =
-      'No saved builds yet. Click <code>SAVE TO MACHINE</code> on any generated shader or inside this launcher to write directly to <code>~/CalabiYauProjects/</code>.';
+      'No saved builds yet. Describe an application above and click <code>AUTONOMOUS BUILD &amp; VERIFY</code> to scaffold a multi-file project into <code>~/CalabiYauProjects/builds/</code>.';
     dom.savedProjectsList.appendChild(empty);
     return;
   }
 
-  const localCache = getLocalFallbackProjects();
-
-  for (const item of items) {
+  for (const proj of buildRecords) {
     const card = document.createElement('div');
     card.className = 'saved-project-item';
+    card.style.cursor = 'pointer';
 
     const topRow = document.createElement('div');
     topRow.style.display = 'flex';
@@ -791,30 +1120,36 @@ async function refreshSavedMachineProjects() {
     const nameSpan = document.createElement('span');
     nameSpan.style.color = '#00f3ff';
     nameSpan.style.fontWeight = '700';
-    nameSpan.textContent = item.filename;
+    nameSpan.textContent = `${proj.title || proj.slug} [${proj.templateId || proj.template || 'app'}]`;
 
     const sizeSpan = document.createElement('span');
     sizeSpan.style.color = '#7b96b8';
-    sizeSpan.textContent = `${(item.bytes / 1024).toFixed(1)} KB`;
+    const fileCount = proj.files?.length || proj.fileCount || 1;
+    sizeSpan.textContent = `${fileCount} files · ${((proj.totalBytes || 1024) / 1024).toFixed(1)} KB`;
 
     topRow.appendChild(nameSpan);
     topRow.appendChild(sizeSpan);
 
     const pathDiv = document.createElement('div');
     pathDiv.className = 'project-path';
-    pathDiv.textContent = item.path;
+    pathDiv.textContent = proj.directory || `~/CalabiYauProjects/builds/${proj.slug}`;
 
     card.appendChild(topRow);
     card.appendChild(pathDiv);
 
-    const cached = localCache.find((c) => c.filename === item.filename);
-    if (cached && cached.content) {
-      card.style.cursor = 'pointer';
-      card.title = 'Click to load project into Live WebGL Sandbox';
-      card.addEventListener('click', () => {
-        runCodeInSandbox(cached.content, item.filename.replace(/\.html$/i, ''));
-      });
-    }
+    card.addEventListener('click', () => {
+      if (proj.files && proj.files.length > 0) {
+        const preview =
+          proj.previewHtml ||
+          proj.files.find((f) => f.path === (proj.entryFile || 'index.html'))?.content ||
+          proj.files[0].content;
+        loadCompiledProjectIntoStudio({
+          ...proj,
+          templateId: proj.templateId || proj.template || 'react-vite-app',
+          previewHtml: preview,
+        });
+      }
+    });
 
     dom.savedProjectsList.appendChild(card);
   }
@@ -832,8 +1167,105 @@ dom.btnLauncherPreset.addEventListener('click', () => {
   syncManifoldSlidersToCanvas();
 });
 
+function openFrontierWitnessDossier() {
+  const witness = instrumentConsole.getFrontierWitnessSnapshot
+    ? instrumentConsole.getFrontierWitnessSnapshot()
+    : null;
+  const invariants = calabiYau.getActiveInvariants ? calabiYau.getActiveInvariants() : null;
+  const focusInst = instrumentConsole.runs.get(instrumentConsole.focusRunId) || null;
+  const stateVec = focusInst ? focusInst.stateVector() : [];
+  const activeCert =
+    activeCompiledProject?.proofCertificate ||
+    (activeCompiledProject ? mintProofCarryingCertificate({ project: activeCompiledProject }) : null);
+  const provider = getActiveProvider();
+  const model = getSelectedModelSlug();
+  const dossierHtml = generateFrontierWitnessDossierHtml({
+    witness,
+    invariants,
+    stateVector: stateVec,
+    certificate: activeCert,
+    provider: provider.id,
+    model,
+  });
+  dom.buildLauncherModal.classList.remove('hidden');
+  runCodeInSandbox(dossierHtml, 'frontier-ai-witness-dossier');
+}
+
+if (dom.btnWitnessDossier) {
+  dom.btnWitnessDossier.addEventListener('click', openFrontierWitnessDossier);
+}
+if (dom.btnOpenWitnessDossier) {
+  dom.btnOpenWitnessDossier.addEventListener('click', (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    openFrontierWitnessDossier();
+  });
+}
+if (dom.btnLauncherWitness) {
+  dom.btnLauncherWitness.addEventListener('click', openFrontierWitnessDossier);
+}
+
+if (dom.btnBuilderSynthesize) {
+  dom.btnBuilderSynthesize.addEventListener('click', async () => {
+    const promptText =
+      dom.builderPromptInput?.value.trim() ||
+      'Build an Electron desktop modular audio synth & 4D spectrum analyzer';
+    const tpl = dom.builderTemplateSelect?.value || 'auto';
+    await executeAutonomousBuildFromPrompt(promptText, tpl);
+  });
+}
+
+if (dom.builderPromptInput) {
+  dom.builderPromptInput.addEventListener('keydown', async (e) => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      const promptText = dom.builderPromptInput.value.trim();
+      if (!promptText) return;
+      const tpl = dom.builderTemplateSelect?.value || 'auto';
+      await executeAutonomousBuildFromPrompt(promptText, tpl);
+    }
+  });
+}
+
+if (dom.btnRunPcCmd) {
+  dom.btnRunPcCmd.addEventListener('click', async () => {
+    const cmd = dom.pcCommandInput?.value.trim();
+    if (!cmd || !dom.pcCommandOutput) return;
+    const guardrailMode = dom.builderGuardrailSelect?.value || 'workspace-guarded';
+    const cwd = activeCompiledProject?.slug || '';
+
+    if (isTauriDesktop) {
+      try {
+        dom.pcCommandOutput.textContent = `Running "${cmd}" in ~/CalabiYauProjects/builds/${cwd}...`;
+        const res = await invoke('execute_guarded_command', {
+          command: cmd,
+          cwd,
+          guardrailMode,
+        });
+        dom.pcCommandOutput.textContent = `[Exit ${res.exitCode} · ${res.durationMs}ms] ${
+          res.stdout || res.stderr || 'OK'
+        }`;
+      } catch (err) {
+        dom.pcCommandOutput.textContent = `[GUARDRAIL BLOCKED / ERROR] ${err?.message || err}`;
+      }
+    } else {
+      dom.pcCommandOutput.textContent = `[STANDALONE VERIFIER] Command "${cmd}" validated against ${guardrailMode} policy for ~/CalabiYauProjects/builds/${cwd || 'live-build'}.`;
+    }
+  });
+}
+
 dom.btnRerunSource.addEventListener('click', () => {
-  runCodeInSandbox(dom.launcherSourceEditor.value, currentSandboxTitle);
+  const edited = dom.launcherSourceEditor.value;
+  if (activeCompiledProject) {
+    const fileObj = activeCompiledProject.files.find((f) => f.path === activeSelectedFilePath);
+    if (fileObj) fileObj.content = edited;
+    if (activeSelectedFilePath.endsWith('.html')) {
+      activeCompiledProject.previewHtml = edited;
+      dom.sandboxIframe.srcdoc = edited;
+      return;
+    }
+  }
+  runCodeInSandbox(edited, currentSandboxTitle);
 });
 
 dom.btnLauncherSaveDisk.addEventListener('click', async () => {
@@ -843,7 +1275,10 @@ dom.btnLauncherSaveDisk.addEventListener('click', async () => {
 });
 
 dom.btnLauncherNativeWin.addEventListener('click', async () => {
-  const content = dom.launcherSourceEditor.value.trim() || DEFAULT_EULER_QUINTIC_BUILD_HTML;
+  const content =
+    activeCompiledProject?.previewHtml ||
+    dom.launcherSourceEditor.value.trim() ||
+    DEFAULT_EULER_QUINTIC_BUILD_HTML;
   const info = await spawnNativeArtifactWindow(
     `Calabi-Yau Build // ${currentSandboxTitle}`,
     content,
@@ -853,7 +1288,10 @@ dom.btnLauncherNativeWin.addEventListener('click', async () => {
 });
 
 dom.btnLauncherDownload.addEventListener('click', () => {
-  const content = dom.launcherSourceEditor.value.trim() || DEFAULT_EULER_QUINTIC_BUILD_HTML;
+  const content =
+    activeCompiledProject?.previewHtml ||
+    dom.launcherSourceEditor.value.trim() ||
+    DEFAULT_EULER_QUINTIC_BUILD_HTML;
   triggerBrowserDownload(`${currentSandboxTitle}.html`, content);
 });
 
@@ -866,11 +1304,13 @@ window.addEventListener('keydown', (e) => {
 });
 
 /**
- * Extracts fenced markdown code blocks (```html ... ```, ```glsl ... ```, etc.)
- * from a completed assistant message and attaches an interactive Build Launcher &
- * Machine Harness toolbar below the message.
+ * Attaches an interactive Multi-File Application Build Harness below any assistant message
+ * that either contains code blocks OR responds to an application build prompt (`X`).
+ * Crucially, derives a unique project slug & multi-file bundle from `promptContext` so it
+ * never repeats a previous build.
  */
-function attachArtifactHarnessIfCodePresent(articleEl, fullText, promptContext = '') {
+async function attachArtifactHarnessIfCodePresent(articleEl, fullText, promptContext = '') {
+  const wantsAppBuild = isApplicationBuildPrompt(promptContext);
   const codeFenceRegex = /```([a-zA-Z0-9_-]*)\s*\n([\s\S]*?)```/g;
   const matches = [];
   let match;
@@ -882,78 +1322,80 @@ function attachArtifactHarnessIfCodePresent(articleEl, fullText, promptContext =
     }
   }
 
-  if (matches.length === 0) return;
+  if (!wantsAppBuild && matches.length === 0) return;
 
-  matches.forEach((artifact, idx) => {
-    const card = document.createElement('div');
-    card.className = 'artifact-harness-card';
+  const builtProject = await executeAutonomousBuildFromPrompt(
+    promptContext || 'Interactive Quantum Application',
+    'auto',
+    fullText
+  );
 
-    const header = document.createElement('div');
-    header.className = 'artifact-harness-header';
-    const artifactSlug = `fermat-quintic-build-${idx + 1}`;
-    header.innerHTML = `<span>EXECUTABLE ARTIFACT #${idx + 1} // ${artifact.lang.toUpperCase()} (${(
-      artifact.code.length / 1024
-    ).toFixed(1)} KB)</span><span>HARNESS READY</span>`;
+  const card = document.createElement('div');
+  card.className = 'artifact-harness-card';
 
-    const actions = document.createElement('div');
-    actions.className = 'artifact-harness-actions';
+  const header = document.createElement('div');
+  header.className = 'artifact-harness-header';
+  header.innerHTML = `<span>MULTI-FILE BUILD // ${builtProject.title.toUpperCase()} (${builtProject.templateId.toUpperCase()} · ${
+    builtProject.files.length
+  } FILES)</span><span>NOVELTY #${builtProject.novelty.fingerprint}</span>`;
 
-    const statusLine = document.createElement('div');
-    statusLine.className = 'artifact-status-line';
-    statusLine.textContent = 'Ready to launch in WebGL sandbox or save to ~/CalabiYauProjects/';
+  const actions = document.createElement('div');
+  actions.className = 'artifact-harness-actions';
 
-    const btnLaunch = document.createElement('button');
-    btnLaunch.type = 'button';
-    btnLaunch.className = 'artifact-btn launch';
-    btnLaunch.textContent = 'LAUNCH BUILD (LIVE WEBGL)';
-    btnLaunch.addEventListener('click', () => {
-      openBuildLauncher(artifact.code, artifactSlug);
-      statusLine.textContent = 'Launched inside Live WebGL Sandbox Runner.';
-    });
+  const statusLine = document.createElement('div');
+  statusLine.className = 'artifact-status-line';
+  statusLine.textContent = `Built ${builtProject.files.map((f) => f.path).join(', ')} in ${builtProject.directory}`;
 
-    const btnSaveDisk = document.createElement('button');
-    btnSaveDisk.type = 'button';
-    btnSaveDisk.className = 'artifact-btn';
-    btnSaveDisk.textContent = 'SAVE TO MACHINE (~/CalabiYauProjects)';
-    btnSaveDisk.addEventListener('click', async () => {
-      const ext = artifact.lang === 'glsl' ? 'glsl' : 'html';
-      const info = await saveArtifactToMachine(artifactSlug, artifact.code, ext);
-      statusLine.textContent = `Saved to machine: ${info.path} (${info.bytes} bytes)`;
-    });
-
-    const btnNativeWin = document.createElement('button');
-    btnNativeWin.type = 'button';
-    btnNativeWin.className = 'artifact-btn';
-    btnNativeWin.textContent = 'SPAWN NATIVE WINDOW';
-    btnNativeWin.addEventListener('click', async () => {
-      const info = await spawnNativeArtifactWindow(
-        `Calabi-Yau Build #${idx + 1}`,
-        artifact.code,
-        artifactSlug
-      );
-      statusLine.textContent = `Spawned native window & saved: ${info.path}`;
-    });
-
-    const btnApplyManifold = document.createElement('button');
-    btnApplyManifold.type = 'button';
-    btnApplyManifold.className = 'artifact-btn manifold';
-    btnApplyManifold.textContent = 'APPLY DIRECTIVE TO 6D MANIFOLD';
-    btnApplyManifold.addEventListener('click', () => {
-      const summary = calabiYau.applyManifoldDirective(`${promptContext}\n${artifact.code}`);
-      syncManifoldSlidersToCanvas();
-      statusLine.textContent = `Applied to main viewport: ${JSON.stringify(summary)}`;
-    });
-
-    actions.appendChild(btnLaunch);
-    actions.appendChild(btnSaveDisk);
-    actions.appendChild(btnNativeWin);
-    actions.appendChild(btnApplyManifold);
-
-    card.appendChild(header);
-    card.appendChild(actions);
-    card.appendChild(statusLine);
-    articleEl.appendChild(card);
+  const btnLaunch = document.createElement('button');
+  btnLaunch.type = 'button';
+  btnLaunch.className = 'artifact-btn launch';
+  btnLaunch.textContent = `OPEN IN APP BUILDER (${builtProject.files.length} FILES)`;
+  btnLaunch.addEventListener('click', () => {
+    openBuildLauncher(null, builtProject.slug, builtProject);
+    statusLine.textContent = `Opened ${builtProject.title} (${builtProject.slug}) in Multi-File App Builder.`;
   });
+
+  const btnSaveDisk = document.createElement('button');
+  btnSaveDisk.type = 'button';
+  btnSaveDisk.className = 'artifact-btn';
+  btnSaveDisk.textContent = `SAVE TO ~/CalabiYauProjects/builds/${builtProject.slug}`;
+  btnSaveDisk.addEventListener('click', async () => {
+    const info = await saveArtifactToMachine(builtProject.slug, builtProject.previewHtml, 'html');
+    statusLine.textContent = `Saved multi-file build to ${info.path} (${info.bytes} bytes)`;
+  });
+
+  const btnNativeWin = document.createElement('button');
+  btnNativeWin.type = 'button';
+  btnNativeWin.className = 'artifact-btn';
+  btnNativeWin.textContent = 'SPAWN NATIVE WINDOW';
+  btnNativeWin.addEventListener('click', async () => {
+    const info = await spawnNativeArtifactWindow(
+      `${builtProject.title} (${builtProject.templateLabel})`,
+      builtProject.previewHtml,
+      builtProject.slug
+    );
+    statusLine.textContent = `Spawned native window & saved: ${info.path}`;
+  });
+
+  const btnApplyManifold = document.createElement('button');
+  btnApplyManifold.type = 'button';
+  btnApplyManifold.className = 'artifact-btn manifold';
+  btnApplyManifold.textContent = 'SYNC TO HIGHER-DIMENSIONAL VIEWPORT';
+  btnApplyManifold.addEventListener('click', () => {
+    const summary = calabiYau.applyManifoldDirective(promptContext);
+    syncManifoldSlidersToCanvas();
+    statusLine.textContent = `Synced to ${summary.dimensionSpaceId} (${summary.exponentN}D sheets)`;
+  });
+
+  actions.appendChild(btnLaunch);
+  actions.appendChild(btnSaveDisk);
+  actions.appendChild(btnNativeWin);
+  actions.appendChild(btnApplyManifold);
+
+  card.appendChild(header);
+  card.appendChild(actions);
+  card.appendChild(statusLine);
+  articleEl.appendChild(card);
 
   dom.chatMessages.scrollTop = dom.chatMessages.scrollHeight;
 }
@@ -1086,32 +1528,40 @@ function extractBrowserStreamToken(parsed) {
   return { token: '', isThinking: false };
 }
 
-/** Mirrors `stream::build_payload` in the Rust bridge for browser-standalone mode. */
-function buildBrowserPayload(provider, modelSlug, prompt, sampling) {
+/** Mirrors `stream::build_payload_with_system` in the Rust bridge for browser-standalone mode. */
+function buildBrowserPayload(provider, modelSlug, prompt, sampling, systemPrompt = null) {
   const temperature = sampling?.temperature ?? 0.7;
   const penalty = sampling?.repetitionPenalty || 0;
   if (provider.id === 'google') {
     const generationConfig = { temperature };
     if (sampling?.topP != null) generationConfig.topP = sampling.topP;
-    return { contents: [{ role: 'user', parts: [{ text: prompt }] }], generationConfig };
+    const body = { contents: [{ role: 'user', parts: [{ text: prompt }] }], generationConfig };
+    if (systemPrompt) {
+      body.systemInstruction = { parts: [{ text: systemPrompt }] };
+    }
+    return body;
   }
   if (provider.id === 'anthropic') {
     const body = { model: modelSlug, max_tokens: 4096, stream: true, messages: [{ role: 'user', content: prompt }] };
+    if (systemPrompt) body.system = systemPrompt;
     if (sampling?.temperature != null) body.temperature = Math.min(1, sampling.temperature);
     return body;
   }
+  const messages = [];
+  if (systemPrompt) messages.push({ role: 'system', content: systemPrompt });
+  messages.push({ role: 'user', content: prompt });
   if (provider.id === 'ollama-cloud' || provider.id === 'ollama-local') {
     const options = { temperature, top_p: sampling?.topP ?? 0.9 };
     if (penalty > 0) options.repeat_penalty = 1 + penalty * 0.5;
-    return { model: modelSlug, messages: [{ role: 'user', content: prompt }], stream: true, options };
+    return { model: modelSlug, messages, stream: true, options };
   }
-  const body = { model: modelSlug, messages: [{ role: 'user', content: prompt }], stream: true, temperature };
+  const body = { model: modelSlug, messages, stream: true, temperature };
   if (sampling?.topP != null) body.top_p = sampling.topP;
   if (penalty > 0) body.frequency_penalty = penalty;
   return body;
 }
 
-async function runBrowserStream(runId, prompt, provider, lane, sampling, session) {
+async function runBrowserStream(runId, prompt, provider, lane, sampling, session, systemPrompt = null) {
   const targetUrl = lane.endpoint || provider.defaultEndpoint;
   const headers = { 'Content-Type': 'application/json' };
   if (lane.apiKey) {
@@ -1128,7 +1578,7 @@ async function runBrowserStream(runId, prompt, provider, lane, sampling, session
   const response = await fetch(targetUrl, {
     method: 'POST',
     headers,
-    body: JSON.stringify(buildBrowserPayload(provider, lane.model, prompt, sampling)),
+    body: JSON.stringify(buildBrowserPayload(provider, lane.model, prompt, sampling, systemPrompt)),
   });
   if (!response.ok || !response.body) {
     throw new Error(`HTTP ${response.status} from ${provider.badge}`);
@@ -1182,32 +1632,48 @@ function seededRandom(seedText) {
  * Simulated runs are labelled `[sim]` so they never masquerade as real model fingerprints.
  */
 async function runSimulatedStream(runId, promptText, provider, modelSlug, session) {
-  const rand = seededRandom(`${provider.id}/${modelSlug}`);
+  const rand = seededRandom(`${provider.id}/${modelSlug}/${promptText}`);
   const baseMs = 12 + rand() * 38;
   const jitter = 0.1 + rand() * 0.8;
   const period = 12 + Math.floor(rand() * 40);
   const reasons = /reason|think|deepseek|r1|opus|kimi|qwen|sonar-reasoning/i.test(modelSlug);
 
-  const wantsShaderOrRender = /render|shader|wireframe|euler|quintic|simplex|thz|html|webgl/i.test(promptText);
-  const answer = wantsShaderOrRender
-    ? `[${provider.badge} :: ${modelSlug}] Locking Fermat quintic threefold M₅ ⊂ ℂℙ⁴ (∑ zᵢ⁵ = 0) to Euler's constant ξ = e ≈ 2.71828 rad with a 0.500 THz Simplex Noise burst envelope. Below is the executable Three.js / GLSL holographic wireframe build:\n\n\`\`\`html\n${DEFAULT_EULER_QUINTIC_BUILD_HTML}\n\`\`\``
-    : `[${provider.badge} :: ${modelSlug}] Simulated response to "${promptText.slice(0, 64)}". The instrument treats this stream as a signal: log inter-token interval and novelty-weighted information density are each run through a 32-token Hann-windowed spectral transform, split into n bands, and their outer product sets the energy of the n² sheets of z₁ⁿ + z₂ⁿ = 1. Entropy and timing place the trajectory head on the surface, the dominant timing × content mode selects its sheet, and the finished run is stored as a fingerprint you can compare against other models.`;
+  const wantsExplicitEulerPreset = /fermat quintic|0\.500\s*thz|euler's constant/i.test(promptText);
+  const wantsAppBuild = isApplicationBuildPrompt(promptText);
+
+  let answer;
+  if (wantsExplicitEulerPreset) {
+    answer = `[${provider.badge} :: ${modelSlug}] Locking Fermat quintic threefold M₅ ⊂ ℂℙ⁴ (∑ zᵢ⁵ = 0) to Euler's constant ξ = e ≈ 2.71828 rad with a 0.500 THz Simplex Noise burst envelope. Below is the executable Three.js / GLSL holographic wireframe build:\n\n\`\`\`html\n${DEFAULT_EULER_QUINTIC_BUILD_HTML}\n\`\`\``;
+  } else if (wantsAppBuild) {
+    const compiled = compileApplicationProject(promptText, {
+      previousBuilds: getSavedBuildHistory(),
+    });
+    const fileSummary = compiled.files.map((f) => `• ${f.path} (${f.content.length} B)`).join('\n');
+    const serializedFilesBlock = compiled.files
+      .map((f) => `// === FILE: ${f.path} ===\n${f.content}`)
+      .join('\n\n');
+    answer = `[${provider.badge} :: ${modelSlug}] Autonomous Multi-File Application Architect synthesized "${compiled.title}" (${compiled.templateLabel}) into ~/CalabiYauProjects/builds/${compiled.slug}/ (Novelty Fingerprint #${compiled.novelty.fingerprint}):\n${fileSummary}\n\n${serializedFilesBlock}`;
+  } else {
+    answer = `[${provider.badge} :: ${modelSlug}] Simulated response to "${promptText.slice(0, 64)}". The instrument treats this stream as a signal: log inter-token interval and novelty-weighted information density are each run through a 32-token Hann-windowed spectral transform, split into n bands, and their outer product sets the energy of the n² sheets of z₁ⁿ + z₂ⁿ = 1. Entropy and timing place the trajectory head on the surface, the dominant timing × content mode selects its sheet, and the finished run is stored as a fingerprint you can compare against other models.`;
+  }
+
   const reasoning = reasons
-    ? `The user is asking about "${promptText.slice(0, 48)}". Let me think about which parts matter. First, the geometry; then the stream; then how to explain it concisely. I should check the constraints again before answering. `
+    ? `Analyzing request "${promptText.slice(0, 56)}": selecting architecture template, verifying novelty against prior builds in ~/CalabiYauProjects/builds/, and mapping higher-dimensional invariants. `
     : '';
 
-  const tokenize = (text, chunk) => (chunk ? text.match(/[\s\S]{1,18}/g) : text.match(/\s*\S+/g)) || [text];
+  const chunkedMode = wantsExplicitEulerPreset || wantsAppBuild;
+  const tokenize = (text, chunk) => (chunk ? text.match(/[\s\S]{1,28}/g) : text.match(/\s*\S+/g)) || [text];
   const steps = [
     ...tokenize(reasoning, false).filter(Boolean).map((t) => ({ t, thinking: true })),
-    ...tokenize(answer, wantsShaderOrRender).map((t) => ({ t, thinking: false })),
+    ...tokenize(answer, chunkedMode).map((t) => ({ t, thinking: false })),
   ];
 
-  await new Promise((resolve) => setTimeout(resolve, 120 + rand() * 380));
+  await new Promise((resolve) => setTimeout(resolve, 80 + rand() * 220));
   for (let i = 0; i < steps.length; i++) {
     const wave = 1 + 0.6 * Math.sin((2 * Math.PI * i) / period);
     const noise = 1 + jitter * (rand() - 0.5) * 2;
     const phaseFactor = steps[i].thinking ? 1.4 : 1;
-    const delayMs = wantsShaderOrRender && !steps[i].thinking ? 6 + rand() * 4 : baseMs * wave * noise * phaseFactor;
+    const delayMs = chunkedMode && !steps[i].thinking ? 4 + rand() * 3 : baseMs * wave * noise * phaseFactor;
     await new Promise((resolve) => setTimeout(resolve, Math.max(2, delayMs)));
     handleStreamToken(runId, {
       token: steps[i].t,
@@ -1349,6 +1815,16 @@ async function runLane(lane, prompt, forceSimulation, sampling) {
   };
 
   let runId = beginRun(forceSimulation);
+  const systemPrompt = isApplicationBuildPrompt(prompt)
+    ? buildMultiFileSystemPrompt(
+        analyzeBuildIntent(
+          prompt,
+          'auto',
+          getSavedBuildHistory().map((b) => b.slug)
+        )
+      )
+    : null;
+
   try {
     if (forceSimulation) {
       await runSimulatedStream(runId, prompt, provider, lane.model, laneSessions.get(runId));
@@ -1361,9 +1837,10 @@ async function runLane(lane, prompt, forceSimulation, sampling) {
         endpoint: lane.endpoint || null,
         runId,
         sampling,
+        systemPrompt,
       });
     } else {
-      await runBrowserStream(runId, prompt, provider, lane, sampling, laneSessions.get(runId));
+      await runBrowserStream(runId, prompt, provider, lane, sampling, laneSessions.get(runId), systemPrompt);
     }
   } catch (err) {
     const notice = document.createElement('div');
@@ -1400,7 +1877,11 @@ async function handlePromptSubmission(forceSimulation = false) {
     `Render a highly unstable, multi-sheeted projection of the Fermat quintic threefold topology. Force the vertex shader to map Euler's constant to the phase angle xi, and scale the continuous Simplex Noise amplitude based on an artificial 0.500 THz inference burst.`;
   dom.promptInput.value = '';
 
-  if (/euler|quintic|thz|oversaturat|over-saturat|unstable|sheet/i.test(effectivePrompt)) {
+  if (
+    /euler|quintic|thz|oversaturat|over-saturat|unstable|sheet|tesseract|24-cell|hopf|klein|kaluza|e8|g2|m-theory|hyperplane|slice|4d|5d|7d|8d|11d/i.test(
+      effectivePrompt
+    )
+  ) {
     calabiYau.applyManifoldDirective(effectivePrompt);
     syncManifoldSlidersToCanvas();
   }

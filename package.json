@@ -1,8 +1,8 @@
 {
   "name": "calabi-yau-ai-platform",
   "private": true,
-  "version": "0.4.0",
-  "description": "Calabi-Yau AI Platform: a spectral instrument that maps live LLM token streams onto the sheets of a Fermat Calabi-Yau surface",
+  "version": "0.5.0",
+  "description": "Calabi-Yau AI Platform: Autonomous Multi-File Application Builder, Guarded PC Harness & 2D–11D Higher-Dimensional Scientific Instrument",
   "type": "module",
   "scripts": {
     "dev": "vite",

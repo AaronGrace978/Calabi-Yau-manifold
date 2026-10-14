@@ -12,6 +12,8 @@ import { TrajectoryTracker } from './trajectory.js';
 import { RegimeDetector, median } from './regimes.js';
 import { FP_BANDS, FP_REFERENCE } from './fingerprint.js';
 import { clamp01, MANIFOLD_SCALE } from './manifoldMath.js';
+import { evaluateRiemannianMetric, computeTopologicalInvariants } from '../dimensions/dimensionalEngine.js';
+import { evaluateFrontierWitnessSnapshot, fisherRaoDistance } from '../frontier/frontierLabEngine.js';
 
 /**
  * The instrument's state space. Every dimension is a defined, measured function of the stream
@@ -46,6 +48,7 @@ export class InferenceInstrument {
     windowSize = DEFAULT_WINDOW,
     n = 5,
     xi = 0.68,
+    spaceId = 'calabi-yau-6d',
   } = {}) {
     this.runId = runId;
     this.provider = provider;
@@ -55,6 +58,7 @@ export class InferenceInstrument {
     this.windowSize = windowSize;
     this.n = n;
     this.xi = xi;
+    this.spaceId = spaceId;
 
     this.features = new TokenFeatureExtractor();
     this.regimes = new RegimeDetector();
@@ -63,10 +67,12 @@ export class InferenceInstrument {
 
     this.timingRing = [];
     this.contentRing = [];
+    this.frameHistory = [];
     this.coord = null;
     this.logDtMean = null;
     this.logDtVar = 1;
     this.emaSheet = null;
+    this.lastFrontierWitness = null;
 
     this.acc = {
       tokens: 0,
@@ -96,10 +102,11 @@ export class InferenceInstrument {
     this.features.reset(tMs);
   }
 
-  setGeometry({ n = this.n, xi = this.xi } = {}) {
-    if (n === this.n && Math.abs(xi - this.xi) < 1e-6) return;
+  setGeometry({ n = this.n, xi = this.xi, spaceId = this.spaceId } = {}) {
+    if (n === this.n && Math.abs(xi - this.xi) < 1e-6 && spaceId === this.spaceId) return;
     this.n = n;
     this.xi = xi;
+    this.spaceId = spaceId;
     this.emaSheet = null;
     this.trajectory.reset();
   }
@@ -177,7 +184,21 @@ export class InferenceInstrument {
     this.coord.u += (uRaw - this.coord.u) * COORD_SMOOTHING;
     this.coord.v += (vRaw - this.coord.v) * COORD_SMOOTHING;
 
-    const point = this.trajectory.push({ u: this.coord.u, v: this.coord.v, k1, k2, n, xi: this.xi });
+    const point = this.trajectory.push({
+      u: this.coord.u,
+      v: this.coord.v,
+      k1,
+      k2,
+      n,
+      xi: this.xi,
+      spaceId: this.spaceId,
+    });
+    if (!this.lastRiemannian || this.acc.tokens % 4 === 0) {
+      this.lastRiemannian = evaluateRiemannianMetric(this.spaceId, this.coord.u, this.coord.v, k1, k2, n, this.xi);
+      this.lastTopology = computeTopologicalInvariants(this.spaceId, { exponentN: n });
+    }
+    const riemannian = this.lastRiemannian;
+    const topology = this.lastTopology;
     const refK1 = Math.min(FP_REFERENCE.n - 1, Math.floor((k1 * FP_REFERENCE.n) / n));
     const refK2 = Math.min(FP_REFERENCE.n - 1, Math.floor((k2 * FP_REFERENCE.n) / n));
     this.referenceTrajectory.push({
@@ -232,12 +253,24 @@ export class InferenceInstrument {
       timingFlatness,
       contentFlatness,
       sheetShift,
+      fisherRaoStep: this.emaSheet ? fisherRaoDistance(sheet, this.emaSheet) : 0,
       point,
+      riemannian,
+      topology,
       events,
       state,
       geometry: this.trajectory.metrics(),
       activeRegimes: [...this.regimes.active],
     };
+
+    pushRing(this.frameHistory, this.lastFrame, 36);
+    if (!this.lastFrontierWitness || this.acc.tokens % 4 === 0) {
+      this.lastFrontierWitness = evaluateFrontierWitnessSnapshot({
+        instrument: this,
+        frameHistory: this.frameHistory,
+      });
+    }
+    this.lastFrame.frontier = this.lastFrontierWitness;
     return this.lastFrame;
   }
 
@@ -285,6 +318,10 @@ export class InferenceInstrument {
         contentFlatness: a.spectralFrames ? a.contentFlatness / frames : 1,
       },
       geometry: this.referenceTrajectory.metrics(),
+      frontier: evaluateFrontierWitnessSnapshot({
+        instrument: this,
+        frameHistory: this.frameHistory,
+      }),
       trajectory: this.referenceTrajectory.resample(64).map((p) => p.map((v) => round(v, 5))),
       regimes: regimeCounts,
     };

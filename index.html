@@ -27,6 +27,9 @@
           <button id="btn-build-launcher" class="hud-chip-btn launcher-btn" title="Open Live WebGL Build Launcher &amp; Machine Project Harness">
             BUILD LAUNCHER // PROJECTS
           </button>
+          <button id="btn-witness-dossier" class="hud-chip-btn emerald" title="Open Interactive Frontier Mathematical Witness &amp; Cryptographic Proof Dossier">
+            WITNESS DOSSIER
+          </button>
           <button id="btn-toggle-layout" class="hud-chip-btn" title="Toggle Fullscreen Manifold / Split View">
             SPLIT // HUD
           </button>
@@ -104,8 +107,16 @@
             </div>
           </aside>
 
-          <!-- Bottom-Left Parametric Manifold Controls -->
+          <!-- Bottom-Left Parametric Manifold & Higher-Dimensional Science Controls -->
           <aside class="manifold-controls">
+            <div class="control-group">
+              <label for="dimension-space-select">
+                <span>DIMENSIONAL SPACE (2D–11D)</span>
+                <span id="val-dimension-badge">6D CALABI-YAU</span>
+              </label>
+              <select id="dimension-space-select" class="cyber-select" title="Select Higher-Dimensional Manifold or Polytope"></select>
+            </div>
+
             <div class="control-group">
               <label for="slider-exponent">
                 <span>FERMAT DEGREE (n)</span>
@@ -123,11 +134,36 @@
             </div>
 
             <div class="control-group">
+              <label for="slider-slice-w">
+                <span>4D HYPERPLANE SLICE (w₄)</span>
+                <span id="val-slice-w">OFF (FULL)</span>
+              </label>
+              <div style="display:flex;gap:6px;align-items:center;">
+                <input id="check-slice-enabled" type="checkbox" title="Enable 4D Hyperplane Cross-Section Slicing (w₄ = c)" />
+                <input id="slider-slice-w" type="range" min="-1.5" max="1.5" step="0.05" value="0.0" style="flex:1;" />
+              </div>
+            </div>
+
+            <div class="control-group">
               <label for="slider-resolution">
                 <span>MESH DENSITY</span>
                 <span id="val-resolution">18×18</span>
               </label>
               <input id="slider-resolution" type="range" min="10" max="24" step="2" value="18" />
+            </div>
+
+            <div class="control-group">
+              <label for="graphics-profile-select">
+                <span>HARDWARE GRAPHICS (LOD)</span>
+                <span id="val-graphics-badge">AUTO GPU</span>
+              </label>
+              <select id="graphics-profile-select" class="cyber-select" title="Hardware-Adaptive Graphics Profile (RTX 5060 Ti / RTX 4060 Dell G15 / Steam Deck / Low-End)">
+                <option value="auto">AUTO-DETECT GPU (ADAPTIVE LOD)</option>
+                <option value="ultra">ULTRA // RTX 5060 Ti DESKTOP RIG</option>
+                <option value="high">HIGH // RTX 4060 DELL G15 LAPTOP</option>
+                <option value="steam-deck">HANDHELD // STEAM DECK (1280×800 APU)</option>
+                <option value="low">LOW-END // INTEGRATED APU &amp; ECO</option>
+              </select>
             </div>
           </aside>
 
@@ -158,8 +194,28 @@
             </details>
 
             <details class="instrument-section" open>
-              <summary class="section-label-row"><span>TRAJECTORY GEOMETRY</span></summary>
+              <summary class="section-label-row"><span>TRAJECTORY GEOMETRY &amp; D₂</span></summary>
               <div id="trajectory-metrics" class="kv-list"></div>
+            </details>
+
+            <details class="instrument-section" open>
+              <summary class="section-label-row"><span>TOPOLOGICAL INVARIANTS &amp; METRIC gᵢⱼ</span></summary>
+              <div id="dimension-invariants-panel" class="kv-list"></div>
+            </details>
+
+            <details class="instrument-section" open>
+              <summary class="section-label-row">
+                <span>FRONTIER LAB WITNESS (H₀/H₁ · BERRY · LAWS)</span>
+                <button id="btn-open-witness-dossier" type="button" class="mini-link-btn">OPEN DOSSIER</button>
+              </summary>
+              <canvas
+                id="homology-barcode"
+                width="270"
+                height="52"
+                style="width:100%;height:52px;background:rgba(2,6,14,0.75);border:1px solid rgba(0,243,255,0.18);border-radius:4px;margin-bottom:6px;"
+                title="Vietoris-Rips Persistent Homology Barcode: H₀ connected components (cyan) &amp; H₁ 1-cycles (magenta)"
+              ></canvas>
+              <div id="frontier-witness-panel" class="kv-list"></div>
             </details>
 
             <details class="instrument-section" open>
@@ -324,21 +380,29 @@
         </section>
       </main>
 
-      <!-- Live WebGL Build Launcher & Machine Filesystem Harness Modal -->
+      <!-- Live Multi-File Application Builder & Guarded Machine Harness Modal -->
       <div id="build-launcher-modal" class="launcher-modal hidden">
         <div class="launcher-dialog">
           <header class="launcher-header">
             <div class="launcher-title-group">
-              <span class="brand-glyph">BUILD // HARNESS</span>
-              <span id="launcher-title">LIVE WEBGL SHADER SANDBOX &amp; DISK HARNESS</span>
-              <span id="launcher-status-pill" class="env-pill">~/CalabiYauProjects</span>
+              <span class="brand-glyph">APP // BUILDER</span>
+              <span id="launcher-title">AUTONOMOUS MULTI-FILE APPLICATION BUILDER &amp; PC HARNESS</span>
+              <span id="launcher-status-pill" class="env-pill">~/CalabiYauProjects/builds</span>
             </div>
             <div class="launcher-actions">
+              <select id="builder-guardrail-select" class="cyber-select" style="width:auto;padding:4px 8px;font-size:10px;" title="PC Access Guardrail Policy">
+                <option value="workspace-guarded">GUARDRAIL: WORKSPACE GUARDED</option>
+                <option value="strict-sandbox">GUARDRAIL: STRICT SANDBOX</option>
+                <option value="dry-run">GUARDRAIL: DRY-RUN ONLY</option>
+              </select>
               <button id="btn-launcher-preset" class="hud-chip-btn" title="Load Fermat Quintic Euler ξ = e (0.500 THz) Hologram Preset">
                 LOAD EULER 0.5THz SHADER
               </button>
-              <button id="btn-launcher-save-disk" class="hud-chip-btn emerald" title="Save active build directly to ~/CalabiYauProjects on your machine">
-                SAVE TO MACHINE
+              <button id="btn-launcher-witness" class="hud-chip-btn" title="Launch Interactive Frontier Mathematical Witness &amp; Merkle Proof Dossier">
+                WITNESS DOSSIER
+              </button>
+              <button id="btn-launcher-save-disk" class="hud-chip-btn emerald" title="Save active multi-file build directly to ~/CalabiYauProjects/builds on your machine">
+                SAVE BUILD TO DISK
               </button>
               <button id="btn-launcher-native-win" class="hud-chip-btn" title="Spawn a dedicated native OS window running this build">
                 SPAWN NATIVE WINDOW
@@ -352,38 +416,90 @@
             </div>
           </header>
 
+          <!-- Prompt-Driven Multi-File Application Synthesis Bar -->
+          <div class="builder-synth-bar" style="display:flex;gap:8px;padding:10px 16px;background:rgba(4,10,22,0.92);border-bottom:1px solid rgba(0,243,255,0.22);align-items:center;flex-wrap:wrap;">
+            <select id="builder-template-select" class="cyber-select" style="width:230px;" title="Select Application Template">
+              <option value="auto">AUTO-DETECT TEMPLATE</option>
+              <option value="electron-desktop">ELECTRON DESKTOP APP</option>
+              <option value="tauri-rust-app">TAURI + RUST NATIVE APP</option>
+              <option value="react-vite-app">MODERN WEB APP SUITE</option>
+              <option value="fullstack-node-api">FULL-STACK NODE.JS REST API</option>
+              <option value="python-science-cli">PYTHON SCIENCE LAB &amp; CLI</option>
+              <option value="dimensional-lab">4D–11D DIMENSIONAL SCIENCE LAB</option>
+              <option value="webgl-shader-app">WEBGL / GLSL SHADER STUDIO</option>
+              <option value="frontier-verify-lab">FRONTIER AI WITNESS &amp; HOMOLOGY LAB</option>
+            </select>
+            <input
+              id="builder-prompt-input"
+              type="text"
+              class="cyber-input"
+              style="flex:1;min-width:240px;"
+              placeholder="Describe any app to build (e.g. 'Build an Electron desktop modular audio synth studio' or '4D Hopf fibration &amp; Klein bottle lab')..."
+            />
+            <button id="btn-builder-synthesize" type="button" class="hud-chip-btn emerald">
+              AUTONOMOUS BUILD &amp; VERIFY &#9654;
+            </button>
+          </div>
+
           <div class="launcher-body">
-            <!-- Left Sidebar: Saved Machine Projects & Artifact Source -->
+            <!-- Left Sidebar: Multi-File Project Explorer, Build Pipeline Stages & Guarded PC Terminal -->
             <aside class="launcher-sidebar">
               <div class="sidebar-section-header">
-                <span>SAVED MACHINE PROJECTS</span>
-                <button id="btn-refresh-projects" class="mini-link-btn">REFRESH</button>
+                <span>BUILD PIPELINE &amp; NOVELTY VERIFIER</span>
+                <span id="builder-novelty-badge" class="mini-link-btn">READY</span>
               </div>
-              <div id="saved-projects-list" class="saved-projects-list">
+              <div id="builder-stages-log" class="saved-projects-list" style="max-height:110px;font-size:10px;">
                 <div class="saved-project-empty">
-                  Projects saved via the native Rust harness are stored in <code>~/CalabiYauProjects/</code>.
+                  Autonomous 5-stage loop: Intent &amp; Novelty Check &rarr; Template Scaffold &rarr; Self-Heal &rarr; Write to <code>~/CalabiYauProjects/builds/&lt;slug&gt;</code> &rarr; Toolchain Verify.
                 </div>
               </div>
 
               <div class="sidebar-section-header">
-                <span>EDITABLE ARTIFACT SOURCE (HTML / GLSL)</span>
-                <button id="btn-rerun-source" class="mini-link-btn">RUN CODE &#9654;</button>
+                <span>PROJECT FILES (<span id="active-build-slug">live-build</span>)</span>
+                <button id="btn-rerun-source" class="mini-link-btn">RUN PREVIEW &#9654;</button>
               </div>
+              <div id="project-files-tabs" style="display:flex;gap:4px;flex-wrap:wrap;padding:6px 10px;background:rgba(0,0,0,0.35);border-bottom:1px solid rgba(0,243,255,0.15);"></div>
               <textarea
                 id="launcher-source-editor"
                 class="launcher-source-editor"
                 spellcheck="false"
-                placeholder="Paste or edit generated HTML / Three.js / GLSL shader code here and click RUN CODE..."
+                placeholder="Select any project file tab or edit generated HTML / Electron main.cjs / GLSL shader code here..."
               ></textarea>
+
+              <div class="sidebar-section-header">
+                <span>GUARDED PC COMMAND RUNNER</span>
+                <button id="btn-run-pc-cmd" class="mini-link-btn">EXEC</button>
+              </div>
+              <div style="display:flex;gap:6px;padding:6px 10px;background:rgba(0,0,0,0.4);">
+                <input
+                  id="pc-command-input"
+                  type="text"
+                  class="cyber-input"
+                  style="font-size:11px;padding:4px 8px;"
+                  value="node test.mjs"
+                  placeholder="Allowed dev cmd (e.g. node test.mjs, cargo --version)"
+                />
+              </div>
+              <pre id="pc-command-output" style="margin:0;padding:6px 10px;font-size:10px;max-height:76px;overflow:auto;background:#03060d;color:#7df9ff;border-bottom:1px solid rgba(0,243,255,0.14);">Guardrails active: writes &amp; commands scoped to ~/CalabiYauProjects/builds</pre>
+
+              <div class="sidebar-section-header">
+                <span>SAVED BUILDS (~/CalabiYauProjects/builds)</span>
+                <button id="btn-refresh-projects" class="mini-link-btn">REFRESH</button>
+              </div>
+              <div id="saved-projects-list" class="saved-projects-list">
+                <div class="saved-project-empty">
+                  Projects built via the Autonomous Application Builder are stored in <code>~/CalabiYauProjects/builds/</code>.
+                </div>
+              </div>
             </aside>
 
-            <!-- Right Stage: Live Sandboxed WebGL / Three.js Runner -->
+            <!-- Right Stage: Live Sandboxed Application & WebGL Runner -->
             <section class="launcher-stage">
               <iframe
                 id="sandbox-iframe"
                 class="sandbox-iframe"
                 sandbox="allow-scripts allow-same-origin"
-                title="Calabi-Yau Live Shader Build Runner"
+                title="Calabi-Yau Live Application Build Runner"
               ></iframe>
             </section>
           </div>

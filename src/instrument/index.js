@@ -14,3 +14,5 @@ export {
 export { InterferenceField, LANE_COLORS, hexToRgb } from './interference.js';
 export { ControlSurface, estimatedAmplitude } from './controlSurface.js';
 export * from './manifoldMath.js';
+export * from '../dimensions/dimensionalEngine.js';
+export * from '../frontier/frontierLabEngine.js';

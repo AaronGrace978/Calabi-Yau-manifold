@@ -164,11 +164,24 @@ pub fn build_payload(
     api_url: &str,
     sampling: SamplingParams,
 ) -> Value {
+    build_payload_with_system(provider_id, model, prompt, None, api_url, sampling)
+}
+
+/// Builds the provider-specific JSON body with an optional system prompt.
+pub fn build_payload_with_system(
+    provider_id: &str,
+    model: &str,
+    prompt: &str,
+    system_prompt: Option<&str>,
+    api_url: &str,
+    sampling: SamplingParams,
+) -> Value {
     let temperature = finite(sampling.temperature).map(|t| t.clamp(0.0, 2.0));
     let top_p = finite(sampling.top_p).map(|p| p.clamp(0.0, 1.0));
     let penalty = finite(sampling.repetition_penalty)
         .map(|p| p.clamp(0.0, 2.0))
         .filter(|p| *p > 0.0);
+    let sys_trimmed = system_prompt.map(|s| s.trim()).filter(|s| !s.is_empty());
 
     match provider_id {
         "ollama-cloud" | "ollama-local" => {
@@ -179,11 +192,20 @@ pub fn build_payload(
                 options.insert("repeat_penalty".into(), json!(1.0 + p * 0.5));
             }
             if api_url.ends_with("/api/generate") {
-                json!({ "model": model, "prompt": prompt, "stream": true, "options": options })
+                let mut body = json!({ "model": model, "prompt": prompt, "stream": true, "options": options });
+                if let Some(sys) = sys_trimmed {
+                    body["system"] = json!(sys);
+                }
+                body
             } else {
+                let mut messages = Vec::new();
+                if let Some(sys) = sys_trimmed {
+                    messages.push(json!({ "role": "system", "content": sys }));
+                }
+                messages.push(json!({ "role": "user", "content": prompt }));
                 json!({
                     "model": model,
-                    "messages": [{ "role": "user", "content": prompt }],
+                    "messages": messages,
                     "stream": true,
                     "options": options
                 })
@@ -192,10 +214,13 @@ pub fn build_payload(
         "anthropic" => {
             let mut body = json!({
                 "model": model,
-                "max_tokens": 4096,
+                "max_tokens": if sys_trimmed.is_some() { 8192 } else { 4096 },
                 "stream": true,
                 "messages": [{ "role": "user", "content": prompt }]
             });
+            if let Some(sys) = sys_trimmed {
+                body["system"] = json!(sys);
+            }
             if let Some(t) = temperature {
                 body["temperature"] = json!(t.min(1.0));
             }
@@ -207,15 +232,24 @@ pub fn build_payload(
             if let Some(p) = top_p {
                 config.insert("topP".into(), json!(p));
             }
-            json!({
+            let mut body = json!({
                 "contents": [{ "role": "user", "parts": [{ "text": prompt }] }],
                 "generationConfig": config
-            })
+            });
+            if let Some(sys) = sys_trimmed {
+                body["systemInstruction"] = json!({ "parts": [{ "text": sys }] });
+            }
+            body
         }
         _ => {
+            let mut messages = Vec::new();
+            if let Some(sys) = sys_trimmed {
+                messages.push(json!({ "role": "system", "content": sys }));
+            }
+            messages.push(json!({ "role": "user", "content": prompt }));
             let mut body = json!({
                 "model": model,
-                "messages": [{ "role": "user", "content": prompt }],
+                "messages": messages,
                 "stream": true,
                 "temperature": temperature.unwrap_or(0.7)
             });

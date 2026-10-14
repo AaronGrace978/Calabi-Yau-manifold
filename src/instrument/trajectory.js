@@ -1,8 +1,13 @@
 import { evaluateCalabiYauPoint, unitToParam } from './manifoldMath.js';
+import {
+  evaluateDimensionalPoint,
+  estimateCorrelationDimension,
+  estimateLyapunovExponent,
+} from '../dimensions/dimensionalEngine.js';
 
 /**
- * Tracks the path a generation traces on the Fermat surface and measures its geometry in R⁴
- * (x, y, z, w4) — the full point before the 3D projection drops w4.
+ * Tracks the path a generation traces on the Fermat surface (or any selected N-dimensional space)
+ * and measures its geometry in R⁴ (x, y, z, w4) — the full point before the 3D projection drops w4.
  */
 export class TrajectoryTracker {
   constructor({ maxPoints = 768 } = {}) {
@@ -20,15 +25,21 @@ export class TrajectoryTracker {
     this.sheetTransitions = 0;
     this.prevArg = null;
     this.prevSheet = null;
+    this._cachedDim = 0;
+    this._cachedLyap = 0;
+    this._cachedDimAt = 0;
   }
 
   /**
-   * @param {{u:number, v:number, k1:number, k2:number, n:number, xi:number}} coords
+   * @param {{u:number, v:number, k1:number, k2:number, n:number, xi:number, spaceId?:string}} coords
    *   u, v ∈ [0,1] are unit surface coordinates; (k1, k2) selects the sheet.
    */
-  push({ u, v, k1, k2, n, xi }) {
+  push({ u, v, k1, k2, n, xi, spaceId = 'calabi-yau-6d' }) {
     const [a, b] = unitToParam(u, v);
-    const pt = evaluateCalabiYauPoint(a, b, k1, k2, n, xi);
+    const pt =
+      !spaceId || spaceId === 'calabi-yau-6d'
+        ? evaluateCalabiYauPoint(a, b, k1, k2, n, xi)
+        : evaluateDimensionalPoint(spaceId, u, v, k1, k2, n, xi);
     const p = [pt.x, pt.y, pt.z, pt.w4];
     const sheet = k1 * n + k2;
 
@@ -66,6 +77,11 @@ export class TrajectoryTracker {
   }
 
   metrics() {
+    if (!this._cachedDim || this.points.length - (this._cachedDimAt || 0) >= 8) {
+      this._cachedDim = estimateCorrelationDimension(this.points);
+      this._cachedLyap = estimateLyapunovExponent(this.points);
+      this._cachedDimAt = this.points.length;
+    }
     return {
       points: this.points.length,
       arcLength: this.arcLength,
@@ -73,6 +89,8 @@ export class TrajectoryTracker {
       meanTurningAngle: this.turningCount > 0 ? this.angleSum / this.turningCount : 0,
       winding: this.windingAngle / (2 * Math.PI),
       sheetTransitions: this.sheetTransitions,
+      correlationDimension: this._cachedDim,
+      lyapunovExponent: this._cachedLyap,
     };
   }
 

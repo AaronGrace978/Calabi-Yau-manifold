@@ -8,6 +8,8 @@ import {
   LANE_COLORS,
   hexToRgb,
   MANIFOLD_SCALE,
+  evaluateFrontierWitnessSnapshot,
+  synthesizeCrossLabConsensus,
 } from './instrument/index.js';
 
 const HEAT_STOPS = [
@@ -76,6 +78,14 @@ export class InstrumentConsole {
     return this.canvas.projectionAngle;
   }
 
+  get spaceId() {
+    return this.canvas.spaceId || 'calabi-yau-6d';
+  }
+
+  setDimensionConfig() {
+    this.scheduleRender();
+  }
+
   /** Begins a run; returns its id. */
   startRun({ provider, model, label, color, tMs = 0 }) {
     const runId = `run-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`;
@@ -87,6 +97,7 @@ export class InstrumentConsole {
       color: color || LANE_COLORS[this.runs.size % LANE_COLORS.length],
       n: this.n,
       xi: this.xi,
+      spaceId: this.spaceId,
     });
     instrument.start(tMs);
     if (this.activeRuns().length === 0) {
@@ -109,7 +120,7 @@ export class InstrumentConsole {
   pushToken(runId, { token, thinking = false, tMs }) {
     const inst = this.runs.get(runId);
     if (!inst || inst.finished || !token) return null;
-    inst.setGeometry({ n: this.n, xi: this.xi });
+    inst.setGeometry({ n: this.n, xi: this.xi, spaceId: this.spaceId });
     const frame = inst.push({ token, thinking, tMs });
 
     for (const ev of frame.events) {
@@ -305,10 +316,21 @@ export class InstrumentConsole {
     this.renderBands(frame);
     this.renderState(inst);
     this.renderGeometry(frame);
+    this.renderFrontierWitness(inst, frame);
     this.renderRegimes();
     this.renderInterference();
     this.renderControl();
     this.renderFingerprints();
+  }
+
+  getFrontierWitnessSnapshot() {
+    const inst = this.runs.get(this.focusRunId) || null;
+    const ensemble = this.activeRuns().length > 1 ? this.activeRuns() : this.store.list().slice(0, 8);
+    return evaluateFrontierWitnessSnapshot({
+      instrument: inst,
+      frameHistory: inst?.frameHistory || [],
+      ensembleRuns: ensemble,
+    });
   }
 
   renderStatus(inst) {
@@ -419,12 +441,20 @@ export class InstrumentConsole {
 
   renderGeometry(frame) {
     const g = frame?.geometry;
+    const riem = frame?.riemannian;
+    const inv = this.canvas.getActiveInvariants ? this.canvas.getActiveInvariants() : frame?.topology;
     this.dom.trajectoryMetrics.innerHTML = '';
     const items = [
       ['ARC LENGTH (R⁴)', g ? fmt(g.arcLength, 2) : '—'],
       ['MEAN TURN / STEP', g ? `${fmt(g.meanTurningAngle, 3)} rad` : '—'],
       ['WINDING (arg z₁)', g ? fmt(g.winding, 2) : '—'],
       ['SHEET TRANSITIONS', g ? String(g.sheetTransitions) : '—'],
+      ['CORRELATION DIM (D₂)', g && g.correlationDimension > 0 ? `${fmt(g.correlationDimension, 2)} D` : '—'],
+      ['LYAPUNOV (λ_max)', g ? `${g.lyapunovExponent >= 0 ? '+' : ''}${fmt(g.lyapunovExponent, 3)}` : '—'],
+      [
+        'METRIC √det(g) · K',
+        riem ? `${fmt(riem.areaElement, 3)} · K=${fmt(riem.kahlerPotential, 2)}` : '—',
+      ],
       ['FLATNESS φ_T / φ_C', frame ? `${fmt(frame.timingFlatness, 2)} / ${fmt(frame.contentFlatness, 2)}` : '—'],
       ['ACTIVE REGIMES', frame?.activeRegimes.length ? frame.activeRegimes.join(', ') : 'nominal'],
     ];
@@ -432,6 +462,98 @@ export class InstrumentConsole {
       const row = el('div', 'kv-row');
       row.append(el('span', 'kv-key', k), el('span', 'kv-val', v));
       this.dom.trajectoryMetrics.append(row);
+    }
+
+    if (this.dom.dimensionalInvariants && inv) {
+      this.dom.dimensionalInvariants.innerHTML = '';
+      const hodgePairs = Object.entries(inv.hodgeNumbers || {})
+        .map(([k, v]) => `${k}=${v}`)
+        .join(' · ');
+      const bettiStr = Array.isArray(inv.bettiNumbers) ? `[${inv.bettiNumbers.join(', ')}]` : '—';
+      const rows = [
+        ['MANIFOLD / SPACE', `${inv.dimension}D · ${inv.spaceId}`],
+        ['HOLONOMY GROUP', `${inv.holonomy}${inv.ricciFlat ? ' (Ricci-flat)' : ''}`],
+        ['EULER CHAR (χ)', String(inv.eulerCharacteristic)],
+        ['BETTI b_k', bettiStr],
+        ['INVARIANTS', hodgePairs || '—'],
+      ];
+      for (const [k, v] of rows) {
+        const row = el('div', 'kv-row');
+        row.append(el('span', 'kv-key', k), el('span', 'kv-val', v));
+        this.dom.dimensionalInvariants.append(row);
+      }
+    }
+  }
+
+  renderFrontierWitness(inst, frame) {
+    const box = this.dom.frontierWitnessPanel;
+    const barcodeCvs = this.dom.homologyBarcode;
+    if (!box && !barcodeCvs) return;
+
+    const ensemble = this.activeRuns().length > 1 ? this.activeRuns() : this.store.list().slice(0, 8);
+    const witness =
+      frame?.frontier ||
+      evaluateFrontierWitnessSnapshot({
+        instrument: inst,
+        frameHistory: inst?.frameHistory || [],
+        ensembleRuns: ensemble,
+      });
+    const consensus = synthesizeCrossLabConsensus(
+      ensemble.length > 0 ? ensemble : inst ? [inst] : []
+    );
+
+    if (barcodeCvs) {
+      const ctx = barcodeCvs.getContext('2d');
+      const W = barcodeCvs.width;
+      const H = barcodeCvs.height;
+      ctx.clearRect(0, 0, W, H);
+      const bars = (witness.persistentHomology?.barcode || []).slice(0, 8);
+      if (!bars.length) {
+        ctx.fillStyle = '#5f7896';
+        ctx.font = '9px monospace';
+        ctx.fillText('Stream tokens to compute Vietoris-Rips H₀/H₁ barcode', 8, H * 0.55);
+      } else {
+        const padX = 24;
+        const trackW = W - padX - 8;
+        const rowH = Math.max(5, Math.floor((H - 8) / bars.length));
+        bars.forEach((b, i) => {
+          const y = 4 + i * rowH;
+          const x0 = padX + b.birth * trackW;
+          const x1 = padX + Math.max(b.birth + 0.03, b.death) * trackW;
+          ctx.fillStyle = b.dim === 1 ? '#ff1e9b' : '#00f3ff';
+          ctx.fillRect(x0, y, Math.max(4, x1 - x0), Math.max(3, rowH - 2));
+          ctx.fillStyle = '#8aa4c4';
+          ctx.font = '8px monospace';
+          ctx.fillText(`H${b.dim}`, 4, y + rowH - 1);
+        });
+      }
+    }
+
+    if (box) {
+      box.innerHTML = '';
+      const hom = witness.persistentHomology;
+      const berry = witness.berryHolonomy;
+      const law = witness.symbolicLaw;
+      const rows = [
+        [
+          'HOMOLOGY (β₀, β₁)',
+          `β₀=${hom.betti0} · β₁=${hom.betti1} (${(hom.topologicalIntegrity * 100).toFixed(0)}% clean)`,
+        ],
+        ['TOPOLOGICAL REGIME', hom.regimeClassification],
+        ['PERSISTENCE H_pers', `${fmt(hom.persistenceEntropy, 3)} · max H₁=${fmt(hom.maxCyclePersistence, 3)}`],
+        ['BERRY PHASE γ_Berry', `${fmt(berry.berryPhaseRad, 3)} rad (${berry.holonomyClass})`],
+        ['FISHER-RAO d_FR', `${fmt(frame?.fisherRaoStep ?? witness.fisherRaoStepRad, 4)} rad/step`],
+        ['NOETHER LAW ℐ*', `${law.symbol} (${(law.invarianceScore * 100).toFixed(0)}%)`],
+        [
+          'CROSS-LAB CONSENSUS',
+          `${(consensus.epistemicConsensus * 100).toFixed(1)}% (${consensus.participantCount} run${consensus.participantCount === 1 ? '' : 's'})`,
+        ],
+      ];
+      for (const [k, v] of rows) {
+        const row = el('div', 'kv-row');
+        row.append(el('span', 'kv-key', k), el('span', 'kv-val', v));
+        box.append(row);
+      }
     }
   }
 
