@@ -56,10 +56,10 @@
 
             <div class="metric-grid">
               <div class="metric-card">
-                <span class="metric-label">QUANTUM METRIC (ω)</span>
+                <span class="metric-label">INFORMATION RATE (I)</span>
                 <div class="metric-value-row">
-                  <span id="metric-omega" class="metric-value cyan">0.000</span>
-                  <span class="metric-unit">THz</span>
+                  <span id="metric-omega" class="metric-value cyan">0.0</span>
+                  <span class="metric-unit">I/s</span>
                 </div>
                 <div class="metric-bar-track">
                   <div id="bar-omega" class="metric-bar-fill cyan" style="width: 4%"></div>
@@ -67,7 +67,7 @@
               </div>
 
               <div class="metric-card">
-                <span class="metric-label">STRING AMPLITUDE (Δψ)</span>
+                <span class="metric-label">AMPLITUDE A = f(I)</span>
                 <div class="metric-value-row">
                   <span id="metric-amplitude" class="metric-value magenta">0.045</span>
                   <span class="metric-unit">ℓs</span>
@@ -78,7 +78,7 @@
               </div>
 
               <div class="metric-card">
-                <span class="metric-label">SPECTRAL SATURATION</span>
+                <span class="metric-label">SATURATION S = H/5</span>
                 <div class="metric-value-row">
                   <span id="metric-saturation" class="metric-value">55.0</span>
                   <span class="metric-unit">%</span>
@@ -97,7 +97,7 @@
             <!-- Live Waveform Sparkline -->
             <div class="waveform-box">
               <div class="waveform-label-row">
-                <span>RICCI-FLAT HARMONIC SPECTRUM</span>
+                <span>INFORMATION RATE // LAST 56 TOKENS</span>
                 <span id="manifold-equation">z₁⁵ + z₂⁵ = 1</span>
               </div>
               <canvas id="harmonic-sparkline" width="280" height="44"></canvas>
@@ -130,6 +130,85 @@
               <input id="slider-resolution" type="range" min="10" max="24" step="2" value="18" />
             </div>
           </aside>
+
+          <!-- Right-Side Spectral Inference Instrument -->
+          <aside id="instrument-hud" class="instrument-hud">
+            <div class="hud-header">
+              <span class="hud-kicker">SPECTRAL INFERENCE INSTRUMENT</span>
+              <span id="instrument-status" class="hud-badge">IDLE</span>
+            </div>
+
+            <div class="instrument-section">
+              <div class="section-label-row">
+                <span>SHEET ENERGY E[k₁,k₂]</span>
+                <span class="section-hint">rows: timing mode · cols: content mode</span>
+              </div>
+              <div class="heatmap-wrap">
+                <canvas id="sheet-heatmap" width="168" height="168" title="Click a sheet to set the control-surface target"></canvas>
+                <canvas id="band-spectra" width="104" height="168"></canvas>
+              </div>
+            </div>
+
+            <details class="instrument-section" open>
+              <summary class="section-label-row">
+                <span>11-D INSTRUMENT STATE</span>
+                <button id="btn-export-state" type="button" class="mini-link-btn">COPY STATE JSON</button>
+              </summary>
+              <div id="state-vector" class="state-vector"></div>
+            </details>
+
+            <details class="instrument-section" open>
+              <summary class="section-label-row"><span>TRAJECTORY GEOMETRY</span></summary>
+              <div id="trajectory-metrics" class="kv-list"></div>
+            </details>
+
+            <details class="instrument-section" open>
+              <summary class="section-label-row"><span>REGIME EVENTS</span></summary>
+              <div id="regime-log" class="regime-log"></div>
+            </details>
+
+            <details class="instrument-section" open>
+              <summary class="section-label-row"><span>CONTROL SURFACE</span></summary>
+              <div class="control-surface-grid">
+                <label class="cs-field">
+                  <span>MODE</span>
+                  <select id="control-mode" class="cyber-select">
+                    <option value="off">OFF</option>
+                    <option value="open">OPEN LOOP</option>
+                    <option value="closed">CLOSED LOOP</option>
+                  </select>
+                </label>
+                <label class="cs-field">
+                  <span>TARGET A <em id="val-control-amplitude">0.35</em></span>
+                  <input id="control-amplitude" type="range" min="0.05" max="0.65" step="0.01" value="0.35" />
+                </label>
+                <label class="cs-check">
+                  <input id="control-autoroute" type="checkbox" />
+                  <span>AUTO-ROUTE PROVIDER BY FINGERPRINT</span>
+                </label>
+                <button id="btn-control-reset" type="button" class="mini-link-btn">RESET LOOP</button>
+              </div>
+              <div id="control-readout" class="control-readout"></div>
+              <div id="route-list" class="kv-list"></div>
+            </details>
+
+            <details class="instrument-section" open>
+              <summary class="section-label-row"><span>MULTI-MODEL INTERFERENCE</span></summary>
+              <div id="interference-panel" class="kv-list"></div>
+            </details>
+
+            <details class="instrument-section" open>
+              <summary class="section-label-row">
+                <span>GENERATION FINGERPRINTS</span>
+                <span>
+                  <button id="btn-export-fingerprints" type="button" class="mini-link-btn">EXPORT</button>
+                  <button id="btn-clear-fingerprints" type="button" class="mini-link-btn">CLEAR</button>
+                </span>
+              </summary>
+              <div id="fingerprint-list" class="fingerprint-list"></div>
+              <div id="fingerprint-compare" class="control-readout"></div>
+            </details>
+          </aside>
         </section>
 
         <!-- Right-Side Streaming Chat Overlay -->
@@ -153,6 +232,21 @@
                 <label for="model-select" class="selector-label">FRONTIER MODEL (2026 CATALOG)</label>
                 <select id="model-select" class="cyber-select" title="Select Frontier Model"></select>
               </div>
+            </div>
+
+            <div class="swarm-bar">
+              <button id="btn-toggle-swarm" type="button" class="hud-chip-btn" title="Run the same prompt on several provider/model lanes in parallel">
+                SWARM LANES <span id="swarm-count">(0)</span>
+              </button>
+              <span id="sampling-readout" class="sampling-readout">sampling: provider defaults</span>
+            </div>
+
+            <div id="swarm-drawer" class="config-drawer hidden">
+              <div class="swarm-drawer-header">
+                <span>Each lane streams in parallel and is superposed on the shared sheets.</span>
+                <button id="btn-add-lane" type="button" class="mini-link-btn">+ ADD CURRENT PROVIDER/MODEL</button>
+              </div>
+              <div id="swarm-lane-list" class="swarm-lane-list"></div>
             </div>
 
             <!-- Collapsible API Key / Custom Endpoint / Custom Model Drawer -->

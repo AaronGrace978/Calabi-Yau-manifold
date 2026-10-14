@@ -1,5 +1,13 @@
 import * as THREE from 'three';
-import { listen } from '@tauri-apps/api/event';
+import {
+  evaluateCalabiYauPoint,
+  MANIFOLD_SCALE,
+  MAX_FERMAT_DEGREE,
+  PARAM_DOMAIN,
+} from './instrument/manifoldMath.js';
+
+const MAX_SHEETS = MAX_FERMAT_DEGREE * MAX_FERMAT_DEGREE;
+const TRAJECTORY_CAPACITY = 768;
 
 /**
  * Self-contained 3D Simplex Noise implementation (Gustavson / Perlin simplex algorithm)
@@ -129,15 +137,22 @@ const CALABI_YAU_VERTEX_SHADER = /* glsl */ `
   uniform float uAmplitude;
   uniform float uQuantumFrequency;
   uniform float uSaturation;
+  uniform float uSheetEnergy[${MAX_SHEETS}];
+  uniform vec3 uSheetColor[${MAX_SHEETS}];
+  uniform float uSheetCount;
+  uniform float uInstrumentMix;
 
   attribute float aFourthCoord;
   attribute float aSheetPhase;
+  attribute float aSheetIndex;
 
   varying vec3 vPosition;
   varying vec3 vNormal;
   varying float vDisplacement;
   varying float vFourthCoord;
   varying float vSheetPhase;
+  varying float vSheetGain;
+  varying vec3 vSheetColor;
 
   vec3 mod289(vec3 x) { return x - floor(x * (1.0 / 289.0)) * 289.0; }
   vec4 mod289(vec4 x) { return x - floor(x * (1.0 / 289.0)) * 289.0; }
@@ -207,7 +222,12 @@ const CALABI_YAU_VERTEX_SHADER = /* glsl */ `
   void main() {
     float harmonicWave = snoise(position * uQuantumFrequency + vec3(uTime * 0.9, aFourthCoord, aSheetPhase));
     float stringRipple = sin(length(position) * 6.0 - uTime * 5.0 + aSheetPhase * 6.28318) * 0.35;
-    float totalDisplacement = (harmonicWave + stringRipple) * uAmplitude * 0.45;
+    int sheetIdx = int(aSheetIndex + 0.5);
+    float relativeEnergy = clamp(uSheetEnergy[sheetIdx] * uSheetCount, 0.0, 4.0);
+    float sheetGain = mix(1.0, relativeEnergy, uInstrumentMix);
+    float totalDisplacement = (harmonicWave + stringRipple) * uAmplitude * 0.45 * (0.4 + 0.6 * sheetGain);
+    vSheetGain = sheetGain;
+    vSheetColor = uSheetColor[sheetIdx];
 
     vec3 displacedPosition = position + normalize(normal + vec3(0.0001)) * totalDisplacement;
 
@@ -226,12 +246,15 @@ const CALABI_YAU_FRAGMENT_SHADER = /* glsl */ `
   uniform float uSaturation;
   uniform float uAmplitude;
   uniform float uOpacity;
+  uniform float uInstrumentMix;
 
   varying vec3 vPosition;
   varying vec3 vNormal;
   varying float vDisplacement;
   varying float vFourthCoord;
   varying float vSheetPhase;
+  varying float vSheetGain;
+  varying vec3 vSheetColor;
 
   vec3 hsl2rgb(vec3 c) {
     vec3 rgb = clamp(abs(mod(c.x * 6.0 + vec3(0.0, 4.0, 2.0), 6.0) - 3.0) - 1.0, 0.0, 1.0);
@@ -256,8 +279,10 @@ const CALABI_YAU_FRAGMENT_SHADER = /* glsl */ `
     float fresnel = pow(1.0 - abs(dot(vNormal, viewDir)), 1.6);
     vec3 hotCore = vec3(0.45, 0.98, 1.0) * (uAmplitude * 0.75);
 
-    vec3 finalColor = spectralColor + hotCore * fresnel;
-    float alpha = clamp(uOpacity * (0.45 + fresnel * 0.55 + uAmplitude * 0.35), 0.12, 0.95);
+    float laneMix = uInstrumentMix * clamp(vSheetGain * 0.5, 0.0, 0.85);
+    vec3 finalColor = mix(spectralColor, vSheetColor * (0.6 + 0.4 * light), laneMix) + hotCore * fresnel;
+    float energyGlow = mix(1.0, 0.35 + 0.65 * min(vSheetGain, 2.5), uInstrumentMix);
+    float alpha = clamp(uOpacity * (0.45 + fresnel * 0.55 + uAmplitude * 0.35) * energyGlow, 0.04, 0.95);
 
     gl_FragColor = vec4(finalColor, alpha);
   }
@@ -300,14 +325,23 @@ export class CalabiYauCanvas {
     this.manualRotation = { x: 0.35, y: -0.45 };
     this.cameraDistance = 5.4;
 
-    this.unlistenFns = [];
     this.animationFrameId = null;
+
+    this.displaySheetEnergy = new Float32Array(MAX_SHEETS);
+    this.targetSheetEnergy = new Float32Array(MAX_SHEETS);
+    this.displaySheetColor = new Float32Array(MAX_SHEETS * 3).fill(0.6);
+    this.targetSheetColor = new Float32Array(MAX_SHEETS * 3).fill(0.6);
+    this.instrumentMix = 0;
+    this.instrumentTargetMix = 0;
+    this.lastInstrumentFrameAt = -Infinity;
+    this.trajectories = new Map();
+    this.resetSheetField();
 
     this.initScene();
     this.buildCalabiYauManifold();
     this.buildQuantumParticleHalo();
     this.bindInteractionEvents();
-    this.bindTauriInferenceEvents();
+    this.bindDomPulseEvents();
     this.animate();
   }
 
@@ -339,46 +373,6 @@ export class CalabiYauCanvas {
   }
 
   /**
-   * Evaluates complex power (re + i*im)^exponent * exp(i * sheetAngle)
-   */
-  complexPowerWithSheet(re, im, exponent, sheetAngle) {
-    const r = Math.hypot(re, im);
-    if (r < 1e-9) {
-      return [0.0, 0.0];
-    }
-    const theta = Math.atan2(im, re);
-    const mag = Math.pow(r, exponent);
-    const ang = theta * exponent + sheetAngle;
-    return [mag * Math.cos(ang), mag * Math.sin(ang)];
-  }
-
-  /**
-   * Computes a single 4D point on the Fermat Calabi-Yau cross-section z1^n + z2^n = 1
-   * for sheet indices (k1, k2) and complex coordinates w = a + i*b, then projects to R^3.
-   */
-  evaluateCalabiYauPoint(a, b, k1, k2, n, xi) {
-    const cosRe = Math.cos(a) * Math.cosh(b);
-    const cosIm = -Math.sin(a) * Math.sinh(b);
-
-    const sinRe = Math.sin(a) * Math.cosh(b);
-    const sinIm = Math.cos(a) * Math.sinh(b);
-
-    const exp = 2.0 / n;
-    const angle1 = (2.0 * Math.PI * k1) / n;
-    const angle2 = (2.0 * Math.PI * k2) / n;
-
-    const [z1Re, z1Im] = this.complexPowerWithSheet(cosRe, cosIm, exp, angle1);
-    const [z2Re, z2Im] = this.complexPowerWithSheet(sinRe, sinIm, exp, angle2);
-
-    const x = z1Re;
-    const y = z2Re;
-    const z = Math.cos(xi) * z1Im + Math.sin(xi) * z2Im;
-    const w4 = -Math.sin(xi) * z1Im + Math.cos(xi) * z2Im;
-
-    return { x, y, z, w4 };
-  }
-
-  /**
    * Builds the multi-sheet Calabi-Yau quintic threefold cross-section geometry
    * with welded patch buffers, storing rest positions for real-time simplex noise deformation.
    */
@@ -399,16 +393,13 @@ export class CalabiYauCanvas {
     const uSteps = this.gridResolutionU;
     const vSteps = this.gridResolutionV;
 
-    const aMin = 0.02;
-    const aMax = Math.PI * 0.5 - 0.02;
-    const bMin = -1.15;
-    const bMax = 1.15;
-
-    const scale = 1.55;
+    const { aMin, aMax, bMin, bMax } = PARAM_DOMAIN;
+    const scale = MANIFOLD_SCALE;
 
     const positions = [];
     const fourthCoords = [];
     const sheetPhases = [];
+    const sheetIndices = [];
     const indices = [];
 
     let vertexOffset = 0;
@@ -427,11 +418,12 @@ export class CalabiYauCanvas {
             const v = iv / vSteps;
             const b = bMin + v * (bMax - bMin);
 
-            const pt = this.evaluateCalabiYauPoint(a, b, k1, k2, n, xi);
+            const pt = evaluateCalabiYauPoint(a, b, k1, k2, n, xi);
 
             positions.push(pt.x * scale, pt.y * scale, pt.z * scale);
             fourthCoords.push(pt.w4);
             sheetPhases.push(normalizedPhase);
+            sheetIndices.push(sheetIndex);
           }
         }
 
@@ -457,10 +449,12 @@ export class CalabiYauCanvas {
     this.restPositions = new Float32Array(positions);
     this.fourthCoordArray = new Float32Array(fourthCoords);
     this.sheetPhaseArray = new Float32Array(sheetPhases);
+    this.sheetIndexArray = new Uint8Array(sheetIndices);
 
     geometry.setAttribute('position', new THREE.BufferAttribute(posArray, 3));
     geometry.setAttribute('aFourthCoord', new THREE.BufferAttribute(this.fourthCoordArray, 1));
     geometry.setAttribute('aSheetPhase', new THREE.BufferAttribute(this.sheetPhaseArray, 1));
+    geometry.setAttribute('aSheetIndex', new THREE.BufferAttribute(new Float32Array(sheetIndices), 1));
     geometry.setIndex(indices);
     geometry.computeVertexNormals();
 
@@ -472,6 +466,10 @@ export class CalabiYauCanvas {
       uQuantumFrequency: { value: this.quantumFrequency },
       uSaturation: { value: this.colorSaturation },
       uOpacity: { value: 0.68 },
+      uSheetEnergy: { value: this.displaySheetEnergy },
+      uSheetColor: { value: this.displaySheetColor },
+      uSheetCount: { value: n * n },
+      uInstrumentMix: { value: this.instrumentMix },
     };
 
     const wireframeMaterial = new THREE.ShaderMaterial({
@@ -494,6 +492,10 @@ export class CalabiYauCanvas {
       uQuantumFrequency: this.shaderUniforms.uQuantumFrequency,
       uSaturation: this.shaderUniforms.uSaturation,
       uOpacity: { value: 0.14 },
+      uSheetEnergy: this.shaderUniforms.uSheetEnergy,
+      uSheetColor: this.shaderUniforms.uSheetColor,
+      uSheetCount: this.shaderUniforms.uSheetCount,
+      uInstrumentMix: this.shaderUniforms.uInstrumentMix,
     };
 
     const coreMaterial = new THREE.ShaderMaterial({
@@ -563,6 +565,10 @@ export class CalabiYauCanvas {
     const rest = this.restPositions;
     const normals = this.restNormals;
     const w4 = this.fourthCoordArray;
+    const sheetIdx = this.sheetIndexArray;
+    const energy = this.displaySheetEnergy;
+    const sheetCount = this.exponentN * this.exponentN;
+    const mix = this.instrumentMix;
 
     const freq = this.quantumFrequency * 0.55;
     const amp = this.vibrationAmplitude;
@@ -581,7 +587,9 @@ export class CalabiYauCanvas {
         rz * freq + w4[i] * 0.8
       );
 
-      const displacement = nVal * amp * 0.55;
+      const relative = Math.min(4, energy[sheetIdx[i]] * sheetCount);
+      const gain = 1 + (relative - 1) * mix;
+      const displacement = nVal * amp * 0.55 * (0.4 + 0.6 * gain);
       posArray[idx] = rx + normals[idx] * displacement;
       posArray[idx + 1] = ry + normals[idx + 1] * displacement;
       posArray[idx + 2] = rz + normals[idx + 2] * displacement;
@@ -624,44 +632,152 @@ export class CalabiYauCanvas {
     }
   }
 
-  /**
-   * Subscribes to Tauri window events (`token-received` and `quantum-metric`)
-   * as well as custom DOM fallback events for local testing.
-   */
-  async bindTauriInferenceEvents() {
-    const isTauriRuntime =
-      typeof window !== 'undefined' &&
-      Boolean(window.__TAURI_IPC__ || window.__TAURI_METADATA__ || window.__TAURI__);
-
-    if (isTauriRuntime) {
-      try {
-        const unlistenToken = await listen('token-received', (event) => {
-          const tokenText =
-            typeof event.payload === 'string'
-              ? event.payload
-              : event.payload?.response || '';
-          const estimatedMetric = Math.min(0.35 + tokenText.length * 0.12, 2.2);
-          this.triggerQuantumPulse(estimatedMetric, tokenText);
-        });
-
-        const unlistenMetric = await listen('quantum-metric', (event) => {
-          const metric = Number(event.payload);
-          if (Number.isFinite(metric)) {
-            this.triggerQuantumPulse(metric, '');
-          }
-        });
-
-        this.unlistenFns.push(unlistenToken, unlistenMetric);
-      } catch (err) {
-        console.warn('Tauri event bridge unavailable, falling back to DOM event bus:', err);
-      }
-    }
-
+  /** DOM event bus for manual pulses (`calabi-quantum-metric`); inference is driven via applyInstrumentFrame. */
+  bindDomPulseEvents() {
     this.domMetricHandler = (e) => {
       const { metric, token } = e.detail || {};
       this.triggerQuantumPulse(metric ?? 0.9, token ?? '');
     };
     window.addEventListener('calabi-quantum-metric', this.domMetricHandler);
+  }
+
+  /**
+   * Drives the manifold from measured stream analysis instead of a heuristic pulse.
+   * @param {{amplitude:number, frequency:number, saturation:number, sheet:ArrayLike<number>,
+   *          sheetColor?:ArrayLike<number>}} frame sheet energies sum to 1 over n² sheets;
+   *          sheetColor is a flat RGB array (0..1) per sheet.
+   */
+  applyInstrumentFrame({ amplitude, frequency, saturation, sheet, sheetColor }) {
+    if (Number.isFinite(amplitude)) {
+      this.targetAmplitude = Math.max(this.baseAmplitude, Math.min(0.85, amplitude));
+    }
+    if (Number.isFinite(frequency)) this.targetFrequency = Math.min(4.2, Math.max(0.5, frequency));
+    if (Number.isFinite(saturation)) this.targetSaturation = Math.min(1, Math.max(0, saturation));
+
+    const count = this.exponentN * this.exponentN;
+    if (sheet && sheet.length === count) {
+      for (let i = 0; i < count; i++) this.targetSheetEnergy[i] = sheet[i];
+      if (sheetColor && sheetColor.length >= count * 3) {
+        for (let i = 0; i < count * 3; i++) this.targetSheetColor[i] = sheetColor[i];
+      }
+      this.instrumentTargetMix = 1;
+      this.lastInstrumentFrameAt = this.clock.getElapsedTime();
+    }
+    this.totalTokensVisualized += 1;
+  }
+
+  resetSheetField() {
+    const count = this.exponentN * this.exponentN;
+    this.targetSheetEnergy.fill(0);
+    this.displaySheetEnergy.fill(0);
+    for (let i = 0; i < count; i++) {
+      this.targetSheetEnergy[i] = 1 / count;
+      this.displaySheetEnergy[i] = 1 / count;
+    }
+  }
+
+  /**
+   * Draws (or updates) the polyline a run traces across the surface.
+   * @param {string} runId
+   * @param {Array<[number, number, number]>} points projected, scaled R³ points
+   */
+  setTrajectory(runId, points, color = '#00f3ff') {
+    let entry = this.trajectories.get(runId);
+    if (!entry) {
+      const geometry = new THREE.BufferGeometry();
+      const positions = new Float32Array(TRAJECTORY_CAPACITY * 3);
+      const colors = new Float32Array(TRAJECTORY_CAPACITY * 3);
+      geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+      geometry.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+      const line = new THREE.Line(
+        geometry,
+        new THREE.LineBasicMaterial({
+          vertexColors: true,
+          transparent: true,
+          opacity: 0.95,
+          blending: THREE.AdditiveBlending,
+          depthWrite: false,
+          depthTest: false,
+        })
+      );
+      line.renderOrder = 10;
+      const beads = new THREE.Points(
+        geometry,
+        new THREE.PointsMaterial({
+          size: 0.045,
+          vertexColors: true,
+          transparent: true,
+          opacity: 0.9,
+          blending: THREE.AdditiveBlending,
+          depthWrite: false,
+          depthTest: false,
+        })
+      );
+      beads.renderOrder = 10;
+      const headGeometry = new THREE.BufferGeometry();
+      headGeometry.setAttribute('position', new THREE.BufferAttribute(new Float32Array(3), 3));
+      const head = new THREE.Points(
+        headGeometry,
+        new THREE.PointsMaterial({
+          size: 0.13,
+          color: new THREE.Color(color),
+          transparent: true,
+          opacity: 0.95,
+          blending: THREE.AdditiveBlending,
+          depthWrite: false,
+          depthTest: false,
+        })
+      );
+      head.renderOrder = 11;
+      this.manifoldGroup.add(line);
+      this.manifoldGroup.add(beads);
+      this.manifoldGroup.add(head);
+      entry = { line, beads, head };
+      this.trajectories.set(runId, entry);
+    }
+
+    const pts = points.slice(-TRAJECTORY_CAPACITY);
+    const pos = entry.line.geometry.attributes.position;
+    const col = entry.line.geometry.attributes.color;
+    const c = new THREE.Color(color);
+    for (let i = 0; i < pts.length; i++) {
+      const fade = 0.15 + 0.85 * ((i + 1) / pts.length);
+      pos.array[i * 3] = pts[i][0];
+      pos.array[i * 3 + 1] = pts[i][1];
+      pos.array[i * 3 + 2] = pts[i][2];
+      col.array[i * 3] = c.r * fade;
+      col.array[i * 3 + 1] = c.g * fade;
+      col.array[i * 3 + 2] = c.b * fade;
+    }
+    pos.needsUpdate = true;
+    col.needsUpdate = true;
+    entry.line.geometry.setDrawRange(0, pts.length);
+    entry.line.geometry.computeBoundingSphere();
+
+    if (pts.length) {
+      const headPos = entry.head.geometry.attributes.position;
+      headPos.array.set(pts[pts.length - 1]);
+      headPos.needsUpdate = true;
+      entry.head.geometry.computeBoundingSphere();
+    }
+  }
+
+  clearTrajectories(keepIds = []) {
+    const keep = new Set(keepIds);
+    for (const [id, entry] of this.trajectories) {
+      if (keep.has(id)) continue;
+      for (const obj of [entry.line, entry.beads, entry.head]) {
+        this.manifoldGroup.remove(obj);
+        obj.material.dispose();
+      }
+      entry.line.geometry.dispose();
+      entry.head.geometry.dispose();
+      this.trajectories.delete(id);
+    }
+  }
+
+  get resolution() {
+    return this.gridResolutionU;
   }
 
   /**
@@ -688,6 +804,8 @@ export class CalabiYauCanvas {
     }
 
     if (needsRebuild) {
+      this.resetSheetField();
+      this.clearTrajectories();
       this.buildCalabiYauManifold();
     }
   }
@@ -733,6 +851,8 @@ export class CalabiYauCanvas {
       applied.saturation = 1.0;
     }
 
+    this.resetSheetField();
+    this.clearTrajectories();
     this.buildCalabiYauManifold();
     this.triggerQuantumPulse(Math.max(1.6, burstThz * 3.0), 'DIRECTIVE_LOCK');
     return applied;
@@ -799,6 +919,16 @@ export class CalabiYauCanvas {
     this.targetFrequency += (this.baseFrequency - this.targetFrequency) * 0.045;
     this.quantumFrequency += (this.targetFrequency - this.quantumFrequency) * 0.1;
 
+    if (elapsedTime - this.lastInstrumentFrameAt > 6) this.instrumentTargetMix = 0;
+    this.instrumentMix += (this.instrumentTargetMix - this.instrumentMix) * 0.03;
+    const sheetCount = this.exponentN * this.exponentN;
+    for (let i = 0; i < sheetCount; i++) {
+      this.displaySheetEnergy[i] += (this.targetSheetEnergy[i] - this.displaySheetEnergy[i]) * 0.15;
+    }
+    for (let i = 0; i < sheetCount * 3; i++) {
+      this.displaySheetColor[i] += (this.targetSheetColor[i] - this.displaySheetColor[i]) * 0.15;
+    }
+
     this.updateVertexDeformation(elapsedTime);
 
     if (this.shaderUniforms) {
@@ -806,6 +936,8 @@ export class CalabiYauCanvas {
       this.shaderUniforms.uAmplitude.value = this.vibrationAmplitude;
       this.shaderUniforms.uQuantumFrequency.value = this.quantumFrequency;
       this.shaderUniforms.uSaturation.value = this.colorSaturation;
+      this.shaderUniforms.uSheetCount.value = sheetCount;
+      this.shaderUniforms.uInstrumentMix.value = this.instrumentMix;
     }
 
     if (!this.isDragging) {
@@ -831,9 +963,6 @@ export class CalabiYauCanvas {
   dispose() {
     if (this.animationFrameId) {
       cancelAnimationFrame(this.animationFrameId);
-    }
-    for (const unlisten of this.unlistenFns) {
-      if (typeof unlisten === 'function') unlisten();
     }
     window.removeEventListener('calabi-quantum-metric', this.domMetricHandler);
     window.removeEventListener('pointermove', this.onPointerMove);

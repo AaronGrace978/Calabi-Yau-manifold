@@ -3,6 +3,7 @@ import { listen } from '@tauri-apps/api/event';
 import { appWindow } from '@tauri-apps/api/window';
 import { CalabiYauCanvas } from './CalabiYauCanvas.js';
 import { AI_PROVIDERS } from './providers.js';
+import { InstrumentConsole, LANE_COLORS } from './instrumentConsole.js';
 
 const isTauriDesktop =
   typeof window !== 'undefined' &&
@@ -292,6 +293,32 @@ const dom = {
   btnRerunSource: document.getElementById('btn-rerun-source'),
   launcherSourceEditor: document.getElementById('launcher-source-editor'),
   sandboxIframe: document.getElementById('sandbox-iframe'),
+  // Spectral inference instrument
+  instrumentStatus: document.getElementById('instrument-status'),
+  sheetHeatmap: document.getElementById('sheet-heatmap'),
+  bandSpectra: document.getElementById('band-spectra'),
+  stateVector: document.getElementById('state-vector'),
+  btnExportState: document.getElementById('btn-export-state'),
+  trajectoryMetrics: document.getElementById('trajectory-metrics'),
+  regimeLog: document.getElementById('regime-log'),
+  controlMode: document.getElementById('control-mode'),
+  controlAmplitude: document.getElementById('control-amplitude'),
+  valControlAmplitude: document.getElementById('val-control-amplitude'),
+  controlAutoRoute: document.getElementById('control-autoroute'),
+  btnControlReset: document.getElementById('btn-control-reset'),
+  controlReadout: document.getElementById('control-readout'),
+  routeList: document.getElementById('route-list'),
+  interferencePanel: document.getElementById('interference-panel'),
+  fingerprintList: document.getElementById('fingerprint-list'),
+  fingerprintCompare: document.getElementById('fingerprint-compare'),
+  btnExportFingerprints: document.getElementById('btn-export-fingerprints'),
+  btnClearFingerprints: document.getElementById('btn-clear-fingerprints'),
+  samplingReadout: document.getElementById('sampling-readout'),
+  btnToggleSwarm: document.getElementById('btn-toggle-swarm'),
+  swarmCount: document.getElementById('swarm-count'),
+  swarmDrawer: document.getElementById('swarm-drawer'),
+  btnAddLane: document.getElementById('btn-add-lane'),
+  swarmLaneList: document.getElementById('swarm-lane-list'),
 };
 
 dom.runtimeBadge.textContent = isTauriDesktop ? 'TAURI // IPC READY' : 'WEBGL // STANDALONE';
@@ -447,7 +474,7 @@ dom.btnSyncModels.addEventListener('click', syncLiveModels);
 
 // Harmonic Sparkline Renderer
 const sparkCtx = dom.sparklineCanvas.getContext('2d');
-const metricHistory = new Array(56).fill(0.06);
+const metricHistory = new Array(56).fill(0);
 
 function renderHarmonicSparkline() {
   const width = dom.sparklineCanvas.width;
@@ -471,8 +498,9 @@ function renderHarmonicSparkline() {
   sparkCtx.beginPath();
 
   const step = width / (metricHistory.length - 1);
+  const peak = Math.max(1, ...metricHistory);
   for (let i = 0; i < metricHistory.length; i++) {
-    const normalized = Math.min(metricHistory[i] / 3.2, 1.0);
+    const normalized = Math.min(metricHistory[i] / peak, 1.0);
     const x = i * step;
     const y = height - 4 - normalized * (height - 8);
     if (i === 0) {
@@ -486,38 +514,45 @@ function renderHarmonicSparkline() {
 
 renderHarmonicSparkline();
 
-let tokenTimestamps = [];
+function flashBeacon() {
+  dom.statusBeacon.classList.add('active');
+  clearTimeout(dom.statusBeacon._decayTimer);
+  dom.statusBeacon._decayTimer = setTimeout(() => {
+    dom.statusBeacon.classList.remove('active');
+  }, 180);
+}
 
-function recordTokenTimestamp() {
-  const now = performance.now();
-  tokenTimestamps.push(now);
-  tokenTimestamps = tokenTimestamps.filter((t) => now - t <= 2000);
-  const tps = tokenTimestamps.length / 2.0;
-  dom.metricTps.textContent = tps.toFixed(1);
+function renderTelemetry({ infoRate, amplitude, saturation, tokensPerSec }) {
+  if (Number.isFinite(infoRate)) {
+    dom.metricOmega.textContent = infoRate.toFixed(1);
+    dom.barOmega.style.width = `${Math.min(100, Math.max(4, (Math.tanh(infoRate / 80) * 100)))}%`;
+    metricHistory.push(infoRate);
+    if (metricHistory.length > 56) metricHistory.shift();
+    renderHarmonicSparkline();
+  }
+  dom.metricAmplitude.textContent = amplitude.toFixed(3);
+  dom.barAmplitude.style.width = `${Math.min(100, Math.max(6, (amplitude / 0.85) * 100))}%`;
+  dom.metricSaturation.textContent = (saturation * 100).toFixed(1);
+  if (Number.isFinite(tokensPerSec)) dom.metricTps.textContent = tokensPerSec.toFixed(1);
+  flashBeacon();
 }
 
 const calabiYau = new CalabiYauCanvas(dom.viewport, {
-  onQuantumTelemetry({ metric, amplitude, saturation }) {
-    dom.metricOmega.textContent = metric.toFixed(3);
-    dom.metricAmplitude.textContent = amplitude.toFixed(3);
-    dom.metricSaturation.textContent = (saturation * 100).toFixed(1);
+  onQuantumTelemetry({ amplitude, saturation }) {
+    renderTelemetry({ amplitude, saturation });
+  },
+});
 
-    const omegaPct = Math.min(100, Math.max(4, (metric / 3.5) * 100));
-    const ampPct = Math.min(100, Math.max(6, (amplitude / 0.85) * 100));
-    dom.barOmega.style.width = `${omegaPct}%`;
-    dom.barAmplitude.style.width = `${ampPct}%`;
-
-    metricHistory.push(metric);
-    if (metricHistory.length > 56) {
-      metricHistory.shift();
-    }
-    renderHarmonicSparkline();
-
-    dom.statusBeacon.classList.add('active');
-    clearTimeout(dom.statusBeacon._decayTimer);
-    dom.statusBeacon._decayTimer = setTimeout(() => {
-      dom.statusBeacon.classList.remove('active');
-    }, 180);
+const instrumentConsole = new InstrumentConsole({
+  canvas: calabiYau,
+  dom,
+  onTelemetry(frame) {
+    renderTelemetry({
+      infoRate: frame.features.infoRate,
+      amplitude: frame.amplitude,
+      saturation: frame.saturation,
+      tokensPerSec: frame.features.tokensPerSec,
+    });
   },
 });
 
@@ -906,7 +941,7 @@ function attachArtifactHarnessIfCodePresent(articleEl, fullText, promptContext =
     btnApplyManifold.addEventListener('click', () => {
       const summary = calabiYau.applyManifoldDirective(`${promptContext}\n${artifact.code}`);
       syncManifoldSlidersToCanvas();
-      statusLine.textContent = `Applied to main viewport: ${summary}`;
+      statusLine.textContent = `Applied to main viewport: ${JSON.stringify(summary)}`;
     });
 
     actions.appendChild(btnLaunch);
@@ -924,21 +959,19 @@ function attachArtifactHarnessIfCodePresent(articleEl, fullText, promptContext =
 }
 
 // ============================================================================
-// CHAT STREAMING & REASONING TRACE SEPARATION
+// CHAT STREAMING, REASONING TRACE SEPARATION & SWARM LANES
 // ============================================================================
 
-let activeAssistantBubble = null;
-let activeThinkingBody = null;
-let activeThinkingDrawer = null;
-let activeMetricBadge = null;
 let isGenerating = false;
+const laneSessions = new Map();
 
-function createChatBubble(role, initialText = '', badgeText = '') {
-  const provider = getActiveProvider();
-  const modelSlug = getSelectedModelSlug();
+function createChatBubble(role, initialText = '', badgeText = '', lane = null) {
+  const provider = lane?.provider || getActiveProvider();
+  const modelSlug = lane?.modelSlug || getSelectedModelSlug();
 
   const article = document.createElement('article');
-  article.className = `msg-bubble ${role}`;
+  article.className = `msg-bubble ${role}${lane?.color ? ' lane' : ''}`;
+  if (lane?.color) article.style.borderLeftColor = lane.color;
 
   const meta = document.createElement('div');
   meta.className = 'msg-meta';
@@ -951,6 +984,7 @@ function createChatBubble(role, initialText = '', badgeText = '') {
       : role === 'assistant'
       ? `${provider.badge} // ${modelSlug.toUpperCase()}`
       : 'SYSTEM // ALERT';
+  if (lane?.color) roleSpan.style.color = lane.color;
 
   const metricSpan = document.createElement('span');
   metricSpan.className = 'msg-metric';
@@ -992,34 +1026,31 @@ function createChatBubble(role, initialText = '', badgeText = '') {
   return { article, content, metricSpan, thinkingDrawer, thinkingBody };
 }
 
+/** Routes one streamed token into its lane's chat bubble and the instrument. */
+function handleStreamToken(runId, { token, thinking = false, tMs }) {
+  const session = laneSessions.get(runId);
+  if (!session || !token) return;
+
+  if (thinking && session.thinkingDrawer && session.thinkingBody) {
+    session.thinkingDrawer.style.display = 'block';
+    session.thinkingBody.textContent += token;
+  } else {
+    session.content.textContent += token;
+  }
+
+  const frame = instrumentConsole.pushToken(runId, { token, thinking, tMs });
+  if (frame) {
+    session.metricSpan.textContent = `I=${frame.features.infoRate.toFixed(0)}/s · σ=(${frame.k1},${frame.k2})${
+      session.simulated ? ' [SIM]' : ''
+    }`;
+  }
+  dom.chatMessages.scrollTop = dom.chatMessages.scrollHeight;
+}
+
 if (isTauriDesktop) {
-  listen('thinking-received', (event) => {
-    const token = typeof event.payload === 'string' ? event.payload : '';
-    if (activeThinkingBody && activeThinkingDrawer && token) {
-      activeThinkingDrawer.style.display = 'block';
-      activeThinkingBody.textContent += token;
-      recordTokenTimestamp();
-    }
-  });
-
-  listen('token-received', (event) => {
-    const token =
-      typeof event.payload === 'string' ? event.payload : event.payload?.response || '';
-    if (activeAssistantBubble && token) {
-      activeAssistantBubble.textContent += token;
-      recordTokenTimestamp();
-      dom.chatMessages.scrollTop = dom.chatMessages.scrollHeight;
-    }
-  });
-
-  listen('quantum-metric', (event) => {
-    const metric = Number(event.payload);
-    if (activeMetricBadge && Number.isFinite(metric)) {
-      activeMetricBadge.textContent = `ω = ${metric.toFixed(3)} THz`;
-    }
-    if (Number.isFinite(metric)) {
-      calabiYau.triggerQuantumPulse(metric, 'Ψ');
-    }
+  listen('inference-frame', (event) => {
+    const p = event.payload || {};
+    handleStreamToken(p.runId, { token: p.token, thinking: Boolean(p.thinking), tMs: Number(p.tMs) });
   });
 }
 
@@ -1046,57 +1077,316 @@ function extractBrowserStreamToken(parsed) {
   if (parsed.delta?.text) {
     return { token: parsed.delta.text, isThinking: false };
   }
+  if (parsed.delta?.thinking) {
+    return { token: parsed.delta.thinking, isThinking: true };
+  }
   if (parsed.candidates?.[0]?.content?.parts?.[0]?.text) {
     return { token: parsed.candidates[0].content.parts[0].text, isThinking: false };
   }
   return { token: '', isThinking: false };
 }
 
+/** Mirrors `stream::build_payload` in the Rust bridge for browser-standalone mode. */
+function buildBrowserPayload(provider, modelSlug, prompt, sampling) {
+  const temperature = sampling?.temperature ?? 0.7;
+  const penalty = sampling?.repetitionPenalty || 0;
+  if (provider.id === 'google') {
+    const generationConfig = { temperature };
+    if (sampling?.topP != null) generationConfig.topP = sampling.topP;
+    return { contents: [{ role: 'user', parts: [{ text: prompt }] }], generationConfig };
+  }
+  if (provider.id === 'anthropic') {
+    const body = { model: modelSlug, max_tokens: 4096, stream: true, messages: [{ role: 'user', content: prompt }] };
+    if (sampling?.temperature != null) body.temperature = Math.min(1, sampling.temperature);
+    return body;
+  }
+  if (provider.id === 'ollama-cloud' || provider.id === 'ollama-local') {
+    const options = { temperature, top_p: sampling?.topP ?? 0.9 };
+    if (penalty > 0) options.repeat_penalty = 1 + penalty * 0.5;
+    return { model: modelSlug, messages: [{ role: 'user', content: prompt }], stream: true, options };
+  }
+  const body = { model: modelSlug, messages: [{ role: 'user', content: prompt }], stream: true, temperature };
+  if (sampling?.topP != null) body.top_p = sampling.topP;
+  if (penalty > 0) body.frequency_penalty = penalty;
+  return body;
+}
+
+async function runBrowserStream(runId, prompt, provider, lane, sampling, session) {
+  const targetUrl = lane.endpoint || provider.defaultEndpoint;
+  const headers = { 'Content-Type': 'application/json' };
+  if (lane.apiKey) {
+    if (provider.id === 'anthropic') {
+      headers['x-api-key'] = lane.apiKey;
+      headers['anthropic-version'] = '2023-06-01';
+    } else if (provider.id === 'google') {
+      headers['x-goog-api-key'] = lane.apiKey;
+    } else {
+      headers['Authorization'] = `Bearer ${lane.apiKey}`;
+    }
+  }
+
+  const response = await fetch(targetUrl, {
+    method: 'POST',
+    headers,
+    body: JSON.stringify(buildBrowserPayload(provider, lane.model, prompt, sampling)),
+  });
+  if (!response.ok || !response.body) {
+    throw new Error(`HTTP ${response.status} from ${provider.badge}`);
+  }
+
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = '';
+  while (true) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+
+    let newlineIdx;
+    while ((newlineIdx = buffer.indexOf('\n')) !== -1) {
+      const rawLine = buffer.slice(0, newlineIdx).trim();
+      buffer = buffer.slice(newlineIdx + 1);
+      if (!rawLine || rawLine.startsWith(':') || rawLine.startsWith('event:')) continue;
+      const jsonStr = rawLine.startsWith('data:') ? rawLine.slice(5).trim() : rawLine;
+      if (!jsonStr || jsonStr === '[DONE]') continue;
+
+      let parsed;
+      try {
+        parsed = JSON.parse(jsonStr);
+      } catch {
+        continue;
+      }
+      const { token, isThinking } = extractBrowserStreamToken(parsed);
+      if (token) {
+        handleStreamToken(runId, { token, thinking: isThinking, tMs: performance.now() - session.t0 });
+      }
+    }
+  }
+}
+
+function seededRandom(seedText) {
+  let h = 2166136261;
+  for (let i = 0; i < seedText.length; i++) {
+    h ^= seedText.charCodeAt(i);
+    h = Math.imul(h, 16777619) >>> 0;
+  }
+  return () => {
+    h = (Math.imul(h, 1664525) + 1013904223) >>> 0;
+    return h / 4294967296;
+  };
+}
+
 /**
- * Streams a simulated Calabi-Yau theoretical physics + executable WebGL shader response
- * when no API key is configured or when the user clicks SIMULATE.
+ * Simulated stream with a deterministic per-model timing profile (base interval, jitter, burst
+ * period) and an optional reasoning phase, so swarm lanes and fingerprints differ even offline.
+ * Simulated runs are labelled `[sim]` so they never masquerade as real model fingerprints.
  */
-async function runSimulatedQuantumStream(
-  promptText,
-  provider,
-  modelSlug,
-  targetContentEl,
-  targetMetricEl
-) {
-  const wantsShaderOrRender = /render|shader|wireframe|euler|quintic|simplex|thz|html|webgl/i.test(
-    promptText
-  );
+async function runSimulatedStream(runId, promptText, provider, modelSlug, session) {
+  const rand = seededRandom(`${provider.id}/${modelSlug}`);
+  const baseMs = 12 + rand() * 38;
+  const jitter = 0.1 + rand() * 0.8;
+  const period = 12 + Math.floor(rand() * 40);
+  const reasons = /reason|think|deepseek|r1|opus|kimi|qwen|sonar-reasoning/i.test(modelSlug);
 
-  const responseParagraph = wantsShaderOrRender
+  const wantsShaderOrRender = /render|shader|wireframe|euler|quintic|simplex|thz|html|webgl/i.test(promptText);
+  const answer = wantsShaderOrRender
     ? `[${provider.badge} :: ${modelSlug}] Locking Fermat quintic threefold M₅ ⊂ ℂℙ⁴ (∑ zᵢ⁵ = 0) to Euler's constant ξ = e ≈ 2.71828 rad with a 0.500 THz Simplex Noise burst envelope. Below is the executable Three.js / GLSL holographic wireframe build:\n\n\`\`\`html\n${DEFAULT_EULER_QUINTIC_BUILD_HTML}\n\`\`\``
-    : `[${provider.badge} :: ${modelSlug}] In compactified Type IIB superstring theory, the Fermat quintic Calabi-Yau threefold M₅ ⊂ ℂℙ⁴ defined by ∑ zᵢ⁵ = 0 exhibits vanishing first Chern class c₁(TM) = 0 and Euler characteristic χ = −200 (h¹¹ = 1, h²¹ = 101). Regarding "${promptText.slice(0, 64)}": each token streamed from ${modelSlug} perturbs the Kähler moduli space and excites quantized closed-string vibrational harmonics across the 25 Riemann sheets.`;
+    : `[${provider.badge} :: ${modelSlug}] Simulated response to "${promptText.slice(0, 64)}". The instrument treats this stream as a signal: log inter-token interval and novelty-weighted information density are each run through a 32-token Hann-windowed spectral transform, split into n bands, and their outer product sets the energy of the n² sheets of z₁ⁿ + z₂ⁿ = 1. Entropy and timing place the trajectory head on the surface, the dominant timing × content mode selects its sheet, and the finished run is stored as a fingerprint you can compare against other models.`;
+  const reasoning = reasons
+    ? `The user is asking about "${promptText.slice(0, 48)}". Let me think about which parts matter. First, the geometry; then the stream; then how to explain it concisely. I should check the constraints again before answering. `
+    : '';
 
-  const tokens = responseParagraph.match(/[\s\S]{1,18}/g) || [responseParagraph];
-  let lastTick = performance.now();
+  const tokenize = (text, chunk) => (chunk ? text.match(/[\s\S]{1,18}/g) : text.match(/\s*\S+/g)) || [text];
+  const steps = [
+    ...tokenize(reasoning, false).filter(Boolean).map((t) => ({ t, thinking: true })),
+    ...tokenize(answer, wantsShaderOrRender).map((t) => ({ t, thinking: false })),
+  ];
 
-  for (let i = 0; i < tokens.length; i++) {
-    const token = tokens[i];
-    const delayMs = wantsShaderOrRender ? 8 : 22 + Math.random() * 25;
-    await new Promise((resolve) => setTimeout(resolve, delayMs));
+  await new Promise((resolve) => setTimeout(resolve, 120 + rand() * 380));
+  for (let i = 0; i < steps.length; i++) {
+    const wave = 1 + 0.6 * Math.sin((2 * Math.PI * i) / period);
+    const noise = 1 + jitter * (rand() - 0.5) * 2;
+    const phaseFactor = steps[i].thinking ? 1.4 : 1;
+    const delayMs = wantsShaderOrRender && !steps[i].thinking ? 6 + rand() * 4 : baseMs * wave * noise * phaseFactor;
+    await new Promise((resolve) => setTimeout(resolve, Math.max(2, delayMs)));
+    handleStreamToken(runId, {
+      token: steps[i].t,
+      thinking: steps[i].thinking,
+      tMs: performance.now() - session.t0,
+    });
+  }
+}
 
-    const now = performance.now();
-    const dtSecs = Math.max(0.002, (now - lastTick) / 1000);
-    lastTick = now;
+// ---------------------------------------------------------------------------------------------
+// Swarm lanes
+// ---------------------------------------------------------------------------------------------
 
-    const instantTps = Math.min(120, 1.0 / dtSecs);
-    const metric = Math.min(
-      3.5,
-      Math.max(
-        0.15,
-        (instantTps / 38) * (token.length / 5.2) * (0.85 + 0.35 * Math.sin(i * 0.45))
-      )
-    );
+const SWARM_STORAGE_KEY = 'calabi_yau_swarm_lanes_v1';
+let swarmLanes = loadSwarmLanes();
 
-    targetContentEl.textContent += token;
-    targetMetricEl.textContent = `ω = ${metric.toFixed(3)} THz [SIM]`;
-    recordTokenTimestamp();
-    calabiYau.triggerQuantumPulse(metric, token);
-    dom.chatMessages.scrollTop = dom.chatMessages.scrollHeight;
+function loadSwarmLanes() {
+  try {
+    const raw = localStorage.getItem(SWARM_STORAGE_KEY);
+    const parsed = raw ? JSON.parse(raw) : [];
+    return Array.isArray(parsed) ? parsed.slice(0, LANE_COLORS.length) : [];
+  } catch {
+    return [];
+  }
+}
+
+function persistSwarmLanes() {
+  try {
+    localStorage.setItem(SWARM_STORAGE_KEY, JSON.stringify(swarmLanes));
+  } catch {
+    // Ignore quota errors.
+  }
+}
+
+function renderSwarmLanes() {
+  dom.swarmCount.textContent = `(${swarmLanes.length})`;
+  dom.btnToggleSwarm.classList.toggle('accent', swarmLanes.length >= 2);
+  dom.swarmLaneList.innerHTML = '';
+  if (!swarmLanes.length) {
+    const empty = document.createElement('div');
+    empty.className = 'regime-empty';
+    empty.textContent = 'No lanes. With fewer than 2 lanes, TRANSMIT uses the selected provider/model only.';
+    dom.swarmLaneList.appendChild(empty);
+    return;
+  }
+  swarmLanes.forEach((lane, idx) => {
+    const provider = AI_PROVIDERS.find((p) => p.id === lane.providerId);
+    const row = document.createElement('div');
+    row.className = 'swarm-lane';
+    const dot = document.createElement('span');
+    dot.className = 'swarm-lane-dot';
+    dot.style.background = lane.color;
+    const label = document.createElement('span');
+    label.textContent = `${provider?.badge || lane.providerId} // ${lane.model}`;
+    const remove = document.createElement('button');
+    remove.type = 'button';
+    remove.className = 'mini-link-btn';
+    remove.textContent = 'REMOVE';
+    remove.addEventListener('click', () => {
+      swarmLanes.splice(idx, 1);
+      persistSwarmLanes();
+      renderSwarmLanes();
+    });
+    row.append(dot, label, remove);
+    dom.swarmLaneList.appendChild(row);
+  });
+}
+
+dom.btnToggleSwarm.addEventListener('click', () => {
+  dom.swarmDrawer.classList.toggle('hidden');
+  dom.btnToggleSwarm.classList.toggle('active');
+});
+
+dom.btnAddLane.addEventListener('click', () => {
+  if (swarmLanes.length >= LANE_COLORS.length) return;
+  const provider = getActiveProvider();
+  const model = getSelectedModelSlug();
+  if (swarmLanes.some((l) => l.providerId === provider.id && l.model === model)) return;
+  const used = new Set(swarmLanes.map((l) => l.color));
+  const color = LANE_COLORS.find((c) => !used.has(c)) || LANE_COLORS[0];
+  swarmLanes.push({ providerId: provider.id, model, color });
+  persistSwarmLanes();
+  renderSwarmLanes();
+});
+
+renderSwarmLanes();
+
+function renderSamplingReadout() {
+  const params = instrumentConsole.samplingParams();
+  dom.samplingReadout.textContent = params
+    ? `sampling: T=${params.temperature.toFixed(2)} top_p=${params.topP.toFixed(2)} pen=${params.repetitionPenalty.toFixed(2)}`
+    : 'sampling: provider defaults';
+}
+
+for (const ev of ['change', 'input']) {
+  dom.controlMode.addEventListener(ev, renderSamplingReadout);
+  dom.controlAmplitude.addEventListener(ev, renderSamplingReadout);
+}
+dom.sheetHeatmap.addEventListener('click', renderSamplingReadout);
+renderSamplingReadout();
+
+/** Applies the control surface's routing decision to the provider/model selectors. */
+function applyAutoRoute() {
+  if (!instrumentConsole.control.autoRoute) return null;
+  const route = instrumentConsole.routeSuggestion();
+  if (!route) return null;
+  const provider = AI_PROVIDERS.find((p) => p.id === route.provider);
+  if (!provider) return null;
+  if (dom.providerSelect.value !== provider.id) {
+    dom.providerSelect.value = provider.id;
+    populateModelsForProvider(provider);
+  }
+  if (![...dom.modelSelect.options].some((o) => o.value === route.model)) {
+    const opt = document.createElement('option');
+    opt.value = route.model;
+    opt.textContent = `${route.model} [Routed]`;
+    dom.modelSelect.prepend(opt);
+  }
+  dom.modelSelect.value = route.model;
+  dom.customModelInput.value = '';
+  dom.activeProviderBanner.textContent = `${provider.badge} // ${route.model.toUpperCase()} [ROUTED]`;
+  return route;
+}
+
+async function runLane(lane, prompt, forceSimulation, sampling) {
+  const provider = AI_PROVIDERS.find((p) => p.id === lane.providerId) || AI_PROVIDERS[0];
+  const bubble = createChatBubble('assistant', '', 'STREAMING...', {
+    provider,
+    modelSlug: lane.model,
+    color: lane.multi ? lane.color : null,
+  });
+  bubble.content.classList.add('streaming-cursor');
+
+  const beginRun = (simulated) => {
+    const model = simulated ? `${lane.model} [sim]` : lane.model;
+    const runId = instrumentConsole.startRun({ provider: provider.id, model, label: model, color: lane.color });
+    laneSessions.set(runId, { ...bubble, t0: performance.now(), simulated });
+    return runId;
+  };
+
+  let runId = beginRun(forceSimulation);
+  try {
+    if (forceSimulation) {
+      await runSimulatedStream(runId, prompt, provider, lane.model, laneSessions.get(runId));
+    } else if (isTauriDesktop) {
+      await invoke('generate_calabi_yau_response', {
+        prompt,
+        provider: provider.id,
+        model: lane.model,
+        apiKey: lane.apiKey || null,
+        endpoint: lane.endpoint || null,
+        runId,
+        sampling,
+      });
+    } else {
+      await runBrowserStream(runId, prompt, provider, lane, sampling, laneSessions.get(runId));
+    }
+  } catch (err) {
+    const notice = document.createElement('div');
+    notice.style.color = '#ff85a2';
+    notice.style.fontSize = '11px';
+    notice.style.marginBottom = '6px';
+    notice.textContent = `[${provider.badge} (${lane.model}) notice: ${String(err)} — click "API KEY // ENDPOINT" to set ${
+      provider.envKeyName || 'credentials'
+    }; falling back to the simulator (fingerprint tagged [sim])]`;
+    bubble.content.appendChild(notice);
+
+    instrumentConsole.finishRun(runId);
+    laneSessions.delete(runId);
+    runId = beginRun(true);
+    await runSimulatedStream(runId, prompt, provider, lane.model, laneSessions.get(runId));
+  } finally {
+    bubble.content.classList.remove('streaming-cursor');
+    const fp = instrumentConsole.finishRun(runId);
+    if (fp) {
+      bubble.metricSpan.textContent = `${fp.tokens} tok · ${fp.stats.tokensPerSec.toFixed(1)}/s · FINGERPRINT SAVED`;
+    }
+    laneSessions.delete(runId);
+    attachArtifactHarnessIfCodePresent(bubble.article, bubble.content.textContent, prompt);
   }
 }
 
@@ -1105,143 +1395,52 @@ async function handlePromptSubmission(forceSimulation = false) {
   if (!prompt && !forceSimulation) return;
   if (isGenerating) return;
 
-  const provider = getActiveProvider();
-  const modelSlug = getSelectedModelSlug();
-  const apiKey = dom.apiKeyInput.value.trim();
-  const customEndpoint = dom.endpointInput.value.trim();
-
   const effectivePrompt =
     prompt ||
     `Render a highly unstable, multi-sheeted projection of the Fermat quintic threefold topology. Force the vertex shader to map Euler's constant to the phase angle xi, and scale the continuous Simplex Noise amplitude based on an artificial 0.500 THz inference burst.`;
   dom.promptInput.value = '';
 
-  // Automatically apply any mathematical/shader directives in the user's prompt to the live 3D manifold
   if (/euler|quintic|thz|oversaturat|over-saturat|unstable|sheet/i.test(effectivePrompt)) {
     calabiYau.applyManifoldDirective(effectivePrompt);
     syncManifoldSlidersToCanvas();
   }
 
+  const multi = swarmLanes.length >= 2;
+  if (!multi) applyAutoRoute();
+  const sampling = instrumentConsole.samplingParams();
+  renderSamplingReadout();
+
+  const lanes = multi
+    ? swarmLanes.map((l) => {
+        const cfg = loadProviderConfig(l.providerId);
+        return { ...l, apiKey: cfg.apiKey || '', endpoint: cfg.endpoint || '', multi: true };
+      })
+    : [
+        {
+          providerId: getActiveProvider().id,
+          model: getSelectedModelSlug(),
+          apiKey: dom.apiKeyInput.value.trim(),
+          endpoint: dom.endpointInput.value.trim(),
+          color: LANE_COLORS[0],
+          multi: false,
+        },
+      ];
+
   isGenerating = true;
   dom.btnSend.disabled = true;
   dom.btnSimulate.disabled = true;
 
-  createChatBubble('user', effectivePrompt, `${provider.badge} // TX`);
-  const { article, content, metricSpan, thinkingDrawer, thinkingBody } = createChatBubble(
-    'assistant',
-    '',
-    'STREAMING...'
-  );
-  content.classList.add('streaming-cursor');
-  activeAssistantBubble = content;
-  activeThinkingDrawer = thinkingDrawer;
-  activeThinkingBody = thinkingBody;
-  activeMetricBadge = metricSpan;
+  const provider = getActiveProvider();
+  createChatBubble('user', effectivePrompt, multi ? `SWARM // ${lanes.length} LANES` : `${provider.badge} // TX`);
 
   try {
-    if (forceSimulation) {
-      await runSimulatedQuantumStream(effectivePrompt, provider, modelSlug, content, metricSpan);
-    } else if (isTauriDesktop) {
-      await invoke('generate_calabi_yau_response', {
-        prompt: effectivePrompt,
-        provider: provider.id,
-        model: modelSlug,
-        apiKey: apiKey || null,
-        endpoint: customEndpoint || null,
-      });
-    } else {
-      const targetUrl = customEndpoint || provider.defaultEndpoint;
-      const headers = { 'Content-Type': 'application/json' };
-      if (apiKey) {
-        if (provider.id === 'anthropic') {
-          headers['x-api-key'] = apiKey;
-          headers['anthropic-version'] = '2023-06-01';
-        } else if (provider.id === 'google') {
-          headers['x-goog-api-key'] = apiKey;
-        } else {
-          headers['Authorization'] = `Bearer ${apiKey}`;
-        }
-      }
-
-      const bodyPayload =
-        provider.id === 'google'
-          ? { contents: [{ role: 'user', parts: [{ text: effectivePrompt }] }] }
-          : {
-              model: modelSlug,
-              messages: [{ role: 'user', content: effectivePrompt }],
-              stream: true,
-            };
-
-      const response = await fetch(targetUrl, {
-        method: 'POST',
-        headers,
-        body: JSON.stringify(bodyPayload),
-      });
-
-      if (!response.ok || !response.body) {
-        throw new Error(`HTTP ${response.status} from ${provider.badge}`);
-      }
-
-      const reader = response.body.getReader();
-      const decoder = new TextDecoder();
-      let buffer = '';
-      let lastTime = performance.now();
-
-      while (true) {
-        const { value, done } = await reader.read();
-        if (done) break;
-        buffer += decoder.decode(value, { stream: true });
-
-        let newlineIdx;
-        while ((newlineIdx = buffer.indexOf('\n')) !== -1) {
-          const rawLine = buffer.slice(0, newlineIdx).trim();
-          buffer = buffer.slice(newlineIdx + 1);
-          if (!rawLine || rawLine.startsWith(':') || rawLine.startsWith('event:')) continue;
-
-          const jsonStr = rawLine.startsWith('data:') ? rawLine.slice(5).trim() : rawLine;
-          if (!jsonStr || jsonStr === '[DONE]') continue;
-
-          const parsed = JSON.parse(jsonStr);
-          const { token: tokenPiece, isThinking } = extractBrowserStreamToken(parsed);
-          if (tokenPiece) {
-            const now = performance.now();
-            const dt = Math.max(0.002, (now - lastTime) / 1000);
-            lastTime = now;
-
-            const metric = Math.min(3.5, (1.0 / dt / 42.0) * (tokenPiece.length / 5.0));
-            if (isThinking && thinkingDrawer && thinkingBody) {
-              thinkingDrawer.style.display = 'block';
-              thinkingBody.textContent += tokenPiece;
-            } else {
-              content.textContent += tokenPiece;
-            }
-            metricSpan.textContent = `ω = ${metric.toFixed(3)} THz`;
-            recordTokenTimestamp();
-            calabiYau.triggerQuantumPulse(metric, tokenPiece);
-            dom.chatMessages.scrollTop = dom.chatMessages.scrollHeight;
-          }
-        }
-      }
-    }
-  } catch (err) {
-    const errMsg = String(err);
-    const notice = document.createElement('div');
-    notice.style.color = '#ff85a2';
-    notice.style.fontSize = '11px';
-    notice.style.marginBottom = '6px';
-    notice.textContent = `[${provider.badge} (${modelSlug}) notice: ${errMsg} — click "API KEY // ENDPOINT" to set ${provider.envKeyName || 'credentials'}, engaging quantum simulator]`;
-    content.appendChild(notice);
-    await runSimulatedQuantumStream(effectivePrompt, provider, modelSlug, content, metricSpan);
+    await Promise.all(lanes.map((lane) => runLane(lane, effectivePrompt, forceSimulation, sampling)));
   } finally {
-    content.classList.remove('streaming-cursor');
-    attachArtifactHarnessIfCodePresent(article, content.textContent, effectivePrompt);
-    activeAssistantBubble = null;
-    activeThinkingDrawer = null;
-    activeThinkingBody = null;
-    activeMetricBadge = null;
     isGenerating = false;
     dom.btnSend.disabled = false;
     dom.btnSimulate.disabled = false;
     dom.metricTps.textContent = '0.0';
+    renderSamplingReadout();
   }
 }
 
