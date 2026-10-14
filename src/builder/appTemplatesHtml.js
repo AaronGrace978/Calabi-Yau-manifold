@@ -24,6 +24,122 @@ function escapeHtml(str = '') {
     .replace(/"/g, '&quot;');
 }
 
+function normalizePath(path) {
+  const parts = [];
+  for (const seg of String(path).replace(/\\/g, '/').split('/')) {
+    if (!seg || seg === '.') continue;
+    if (seg === '..') parts.pop();
+    else parts.push(seg);
+  }
+  return parts.join('/');
+}
+
+function dirOfPath(path) {
+  const i = path.lastIndexOf('/');
+  return i === -1 ? '' : path.slice(0, i + 1);
+}
+
+const LOCAL_SPECIFIER_PREFIX = '@local/';
+
+/** Rewrites relative module specifiers to import-map keys so data: URL modules can link. */
+function rewriteRelativeImports(code, fromPath, known) {
+  const base = dirOfPath(fromPath);
+  const swap = (spec) => {
+    if (!/^\.{1,2}\//.test(spec)) return null;
+    const resolved = normalizePath(base + spec);
+    const hit = known.has(resolved) ? resolved : known.has(`${resolved}.js`) ? `${resolved}.js` : null;
+    return hit ? `${LOCAL_SPECIFIER_PREFIX}${hit}` : null;
+  };
+  return code
+    .replace(/(\bfrom\s*|\bimport\s*\(\s*|\bimport\s+)(['"])([^'"]+)\2/g, (m, lead, q, spec) => {
+      const next = swap(spec);
+      return next ? `${lead}${q}${next}${q}` : m;
+    });
+}
+
+/**
+ * Inlines local scripts. Classic scripts are inlined verbatim; ES modules (and everything they
+ * import) are served from an import map of data: URLs so the real module graph runs unchanged.
+ */
+function bundleLocalScripts(html, jsFiles, entryPath) {
+  const entryDir = dirOfPath(normalizePath(entryPath));
+  const byPath = new Map(jsFiles.map((f) => [normalizePath(f.path), f]));
+  const known = new Set(byPath.keys());
+  const resolveSrc = (src) => {
+    const direct = normalizePath(entryDir + src.replace(/^\//, ''));
+    if (byPath.has(direct)) return direct;
+    const rootRel = normalizePath(src);
+    if (byPath.has(rootRel)) return rootRel;
+    const name = src.split('/').pop()?.toLowerCase();
+    return [...byPath.keys()].find((p) => p.split('/').pop()?.toLowerCase() === name) || null;
+  };
+
+  let usesModules = false;
+  const linked = new Set();
+  html = html.replace(/<script\b([^>]*?)\bsrc\s*=\s*["']([^"']+)["']([^>]*)>\s*<\/script>/gi, (full, pre, src, post) => {
+    if (/^(?:[a-z]+:)?\/\//i.test(src) || /^data:/i.test(src)) return full;
+    const path = resolveSrc(src.split(/[?#]/)[0]);
+    if (!path) return full;
+    linked.add(path);
+    const isModule = /type\s*=\s*["']?module/i.test(pre + post);
+    if (isModule) {
+      usesModules = true;
+      return `<script type="module" data-inlined-from="${escapeHtml(path)}">import ${JSON.stringify(LOCAL_SPECIFIER_PREFIX + path)};</script>`;
+    }
+    return `<script data-inlined-from="${escapeHtml(path)}">\n${byPath.get(path).content.replace(/<\/script/gi, '<\\/script')}\n</script>`;
+  });
+
+  html = html.replace(/<script\b([^>]*type\s*=\s*["']?module[^>]*)>([\s\S]*?)<\/script>/gi, (full, attrs, body) => {
+    if (/\bsrc\s*=/.test(attrs) || /data-inlined-from/.test(attrs)) return full;
+    const rewritten = rewriteRelativeImports(body, entryPath, known);
+    if (rewritten !== body) usesModules = true;
+    return `<script${attrs}>${rewritten}</script>`;
+  });
+
+  const importedSomewhere = new Set();
+  for (const [path, f] of byPath) {
+    for (const m of f.content.matchAll(/(?:from\s*|import\s*\(?\s*)['"](\.{1,2}\/[^'"]+)['"]/g)) {
+      const r = normalizePath(dirOfPath(path) + m[1]);
+      importedSomewhere.add(known.has(r) ? r : `${r}.js`);
+    }
+  }
+  const unlinked = [...byPath.entries()].filter(
+    ([path, f]) =>
+      !linked.has(path) &&
+      !importedSomewhere.has(path) &&
+      f.fromLlm === true &&
+      !/node:fs|node:http|require\(['"]electron['"]\)/i.test(f.content)
+  );
+  if (unlinked.length > 0) {
+    usesModules = true;
+    const block = unlinked
+      .map(([path]) => `<script type="module" data-bundled-from="${escapeHtml(path)}">import ${JSON.stringify(LOCAL_SPECIFIER_PREFIX + path)};</script>`)
+      .join('\n');
+    html = /<\/body>/i.test(html) ? html.replace(/<\/body>/i, `${block}\n</body>`) : `${html}\n${block}`;
+  }
+
+  if (!usesModules) return html;
+
+  const imports = {};
+  let scopes;
+  html = html.replace(/<script\b[^>]*type\s*=\s*["']?importmap["']?[^>]*>([\s\S]*?)<\/script>\s*/gi, (_full, body) => {
+    try {
+      const parsed = JSON.parse(body);
+      Object.assign(imports, parsed.imports || {});
+      if (parsed.scopes) scopes = { ...(scopes || {}), ...parsed.scopes };
+    } catch {
+      // Malformed user import map: drop it rather than break every module.
+    }
+    return '';
+  });
+  for (const [path, f] of byPath) {
+    const code = rewriteRelativeImports(f.content, path, known);
+    imports[LOCAL_SPECIFIER_PREFIX + path] = `data:text/javascript;charset=utf-8,${encodeURIComponent(code)}`;
+  }
+  const map = `<script type="importmap">${JSON.stringify(scopes ? { imports, scopes } : { imports }).replace(/<\//g, '<\\/')}</script>`;
+  return /<head[^>]*>/i.test(html) ? html.replace(/<head[^>]*>/i, (m) => `${m}\n${map}`) : `${map}\n${html}`;
+}
+
 /**
  * Bundles an HTML entry file with any sibling CSS and JS files in `files` so that it runs
  * as a complete standalone application inside an iframe `srcdoc` or native window.
@@ -93,53 +209,7 @@ ${html}
     }
   }
 
-  // Helper to sanitize local relative imports when inlining browser scripts
-  const prepareInlineBrowserJs = (rawJs) =>
-    String(rawJs || '')
-      .replace(/^\s*import\s+[^;]+from\s+['"]\.[^'"]+['"];?\s*$/gm, '// [bundled local import]')
-      .replace(/^\s*export\s+default\s+/gm, 'const __defaultExport = ')
-      .replace(/^\s*export\s+(?=(?:const|let|var|function|class|async)\b)/gm, '');
-
-  // 3. Replace <script ... src="..."></script> matching any file in jsFiles
-  html = html.replace(
-    /<script\b([^>]*)src=["']([^"']+\.m?js)["']([^>]*)>\s*<\/script>/gi,
-    (fullMatch, preAttrs, src, postAttrs) => {
-      if (/^https?:\/\/|^\/\//i.test(src)) return fullMatch;
-      const cleanSrc = src.replace(/^\.?\//, '').toLowerCase();
-      const found = jsFiles.find(
-        (f) =>
-          f.path.replace(/^\.?\//, '').toLowerCase() === cleanSrc ||
-          f.path.split('/').pop()?.toLowerCase() === cleanSrc.split('/').pop()
-      );
-      if (found) {
-        inlinedJsPaths.add(found.path);
-        const isMod = /type=["']module["']/i.test(preAttrs + postAttrs);
-        return `<script${isMod ? ' type="module"' : ''} data-inlined-from="${escapeHtml(found.path)}">\n${prepareInlineBrowserJs(found.content)}\n</script>`;
-      }
-      return fullMatch;
-    }
-  );
-
-  // 4. Inject any additional LLM-emitted browser JS files (e.g. app.js, script.js, main.js) that weren't linked
-  const remainingLlmJs = jsFiles.filter(
-    (f) =>
-      !inlinedJsPaths.has(f.path) &&
-      f.fromLlm === true &&
-      !/node:fs|node:http|require\(['"]electron['"]\)/i.test(f.content)
-  );
-  if (remainingLlmJs.length > 0) {
-    const scriptBlock = remainingLlmJs
-      .map(
-        (f) =>
-          `<script type="module" data-bundled-from="${escapeHtml(f.path)}">\n${prepareInlineBrowserJs(f.content)}\n</script>`
-      )
-      .join('\n');
-    if (/<\/body>/i.test(html)) {
-      html = html.replace(/<\/body>/i, `${scriptBlock}\n</body>`);
-    } else {
-      html = `${html}\n${scriptBlock}`;
-    }
-  }
+  html = bundleLocalScripts(html, jsFiles, intent?.template?.entryFile || 'index.html');
 
   return html;
 }
