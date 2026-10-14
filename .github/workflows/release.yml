@@ -39,6 +39,18 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      - name: Resolve release tag
+        id: meta
+        shell: bash
+        run: |
+          if [[ "${GITHUB_REF_TYPE}" == "tag" ]]; then
+            echo "tag=${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
+          elif [[ -n "${{ inputs.tag_name }}" ]]; then
+            echo "tag=${{ inputs.tag_name }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "tag=v0.1.0" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Install Linux system dependencies (GTK3 / WebKit2GTK / AppIndicator)
         if: matrix.platform == 'ubuntu-22.04'
         run: |
@@ -78,8 +90,8 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
-          tagName: ${{ github.ref_type == 'tag' && github.ref_name || inputs.tag_name || 'v0.1.0' }}
-          releaseName: 'Calabi-Yau AI Platform ${{ github.ref_type == 'tag' && github.ref_name || inputs.tag_name || 'v0.1.0' }}'
+          tagName: ${{ steps.meta.outputs.tag }}
+          releaseName: "Calabi-Yau AI Platform ${{ steps.meta.outputs.tag }}"
           releaseBody: |
             ## Calabi-Yau AI Platform — Multi-Platform Desktop Release
 
