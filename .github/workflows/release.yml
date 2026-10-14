@@ -1,0 +1,99 @@
+name: Release Cross-Platform Binaries
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      tag_name:
+        description: 'Release tag version (e.g. v0.1.0)'
+        required: false
+        default: 'v0.1.0'
+
+permissions:
+  contents: write
+
+jobs:
+  release-tauri:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: ubuntu-22.04
+            args: ''
+            os_label: linux-x86_64
+          - platform: macos-latest
+            args: '--target aarch64-apple-darwin'
+            os_label: macos-aarch64
+          - platform: macos-latest
+            args: '--target x86_64-apple-darwin'
+            os_label: macos-x86_64
+          - platform: windows-latest
+            args: ''
+            os_label: windows-x86_64
+
+    runs-on: ${{ matrix.platform }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Linux system dependencies (GTK3 / WebKit2GTK / AppIndicator)
+        if: matrix.platform == 'ubuntu-22.04'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.0-dev \
+            libappindicator3-dev \
+            librsvg2-dev \
+            patchelf \
+            libssl-dev \
+            pkg-config
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'npm'
+
+      - name: Setup Rust stable toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.platform == 'macos-latest' && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}
+
+      - name: Rust Cargo cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: './src-tauri -> target'
+
+      - name: Install frontend dependencies
+        run: npm ci
+
+      - name: Verify frontend production bundle
+        run: npm run build
+
+      - name: Build and publish Tauri desktop bundles
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tagName: ${{ github.ref_type == 'tag' && github.ref_name || inputs.tag_name || 'v0.1.0' }}
+          releaseName: 'Calabi-Yau AI Platform ${{ github.ref_type == 'tag' && github.ref_name || inputs.tag_name || 'v0.1.0' }}'
+          releaseBody: |
+            ## Calabi-Yau AI Platform — Multi-Platform Desktop Release
+
+            Higher-dimensional **Calabi-Yau Quintic Threefold** ($\mathbb{CP}^4$) WebGL visualizer and borderless cyberpunk overlay for local **Ollama** LLM inference (`http://localhost:11434/api/generate`).
+
+            ### Platform Installers & Bundles
+            - **macOS (Apple Silicon M1/M2/M3/M4)**: `.dmg` & `.app.tar.gz` (`aarch64-apple-darwin`)
+            - **macOS (Intel x86_64)**: `.dmg` & `.app.tar.gz` (`x86_64-apple-darwin`)
+            - **Linux (x86_64)**: `.AppImage` & `.deb` (`ubuntu-22.04`)
+            - **Windows (x86_64)**: `.msi` & `.exe` NSIS installer (`x86_64-pc-windows-msvc`)
+
+            ### Runtime Prerequisites
+            1. Ensure [Ollama](https://ollama.com) is running locally (`ollama serve`).
+            2. Pull your preferred local model (`ollama pull llama3`).
+          releaseDraft: false
+          prerelease: false
+          args: ${{ matrix.args }}
