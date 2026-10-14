@@ -8,7 +8,7 @@ mod stream;
 
 use futures_util::StreamExt;
 use guardrails::{
-    evaluate_command_policy, sanitize_project_slug, sanitize_relative_project_path,
+    evaluate_command_policy, sanitize_project_slug, sanitize_relative_project_path, split_command_chain,
     validate_pc_path, GuardrailMode, PolicyVerdict,
 };
 use reqwest::Client;
@@ -649,6 +649,155 @@ async fn write_pc_file(
     Ok(verdict)
 }
 
+fn is_install_command(argv: &[String]) -> bool {
+    let bin = argv[0].to_lowercase();
+    let sub = argv.get(1).map(|s| s.to_lowercase()).unwrap_or_default();
+    matches!(bin.as_str(), "npm" | "pnpm" | "yarn" | "bun" | "pip" | "pip3" | "uv" | "cargo")
+        && matches!(sub.as_str(), "install" | "i" | "ci" | "add" | "build" | "sync")
+}
+
+/// Builds a process for a toolchain argv. On Windows, `npm`/`npx`/etc. are `.cmd` shims that
+/// `CreateProcess` cannot start directly, so they are routed through `cmd /C` (the policy has
+/// already rejected every cmd metacharacter).
+fn toolchain_command(argv: &[String]) -> Command {
+    #[cfg(target_os = "windows")]
+    {
+        let mut cmd = Command::new("cmd");
+        cmd.arg("/C").args(argv);
+        cmd
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        let mut cmd = Command::new(&argv[0]);
+        cmd.args(&argv[1..]);
+        cmd
+    }
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct LaunchResult {
+    command: String,
+    cwd: String,
+    pid: Option<u32>,
+    log_file: String,
+    installed_dependencies: bool,
+}
+
+/// Installs dependencies if needed, then starts a long-running app (Electron, dev server, etc.)
+/// detached from the harness, logging its output to `<project>/.calabi-run.log`.
+#[tauri::command]
+async fn launch_build_project(
+    slug: String,
+    command: Option<String>,
+    guardrail_mode: Option<String>,
+) -> Result<LaunchResult, String> {
+    let mode = GuardrailMode::from_str_opt(guardrail_mode.as_deref());
+    let builds_dir = resolve_builds_directory()?;
+    let project_dir = builds_dir.join(sanitize_project_slug(&slug));
+    if !project_dir.is_dir() {
+        return Err(format!("Project directory {:?} does not exist; save the build first", project_dir));
+    }
+
+    let pkg_path = project_dir.join("package.json");
+    let pkg: Option<Value> = fs::read_to_string(&pkg_path)
+        .ok()
+        .and_then(|s| serde_json::from_str(&s).ok());
+    let run_command = command.filter(|c| !c.trim().is_empty()).unwrap_or_else(|| {
+        if pkg.as_ref().and_then(|p| p["scripts"]["start"].as_str()).is_some() {
+            "npm start".to_string()
+        } else if project_dir.join("app.py").exists() {
+            "python app.py".to_string()
+        } else if project_dir.join("server.mjs").exists() {
+            "node server.mjs".to_string()
+        } else {
+            "npx --yes serve .".to_string()
+        }
+    });
+
+    let verdict = evaluate_command_policy(&run_command, mode);
+    if !verdict.allowed {
+        return Err(verdict.reason);
+    }
+    if mode == GuardrailMode::DryRun {
+        return Err("Dry-run guardrail mode does not launch processes".to_string());
+    }
+
+    let has_deps = pkg.as_ref().is_some_and(|p| {
+        p["dependencies"].as_object().is_some_and(|o| !o.is_empty())
+            || p["devDependencies"].as_object().is_some_and(|o| !o.is_empty())
+    });
+    let mut installed_dependencies = false;
+    if has_deps && !project_dir.join("node_modules").exists() {
+        let argv = vec!["npm".to_string(), "install".to_string(), "--no-audit".to_string(), "--no-fund".to_string()];
+        let output = tokio::time::timeout(
+            Duration::from_secs(900),
+            toolchain_command(&argv).current_dir(&project_dir).output(),
+        )
+        .await
+        .map_err(|_| "npm install timed out after 900s".to_string())?
+        .map_err(|e| format!("Failed to run npm install (is Node.js installed and on PATH?): {e}"))?;
+        if !output.status.success() {
+            return Err(format!(
+                "npm install failed:\n{}{}",
+                String::from_utf8_lossy(&output.stdout),
+                String::from_utf8_lossy(&output.stderr)
+            ));
+        }
+        installed_dependencies = true;
+    }
+
+    let log_path = project_dir.join(".calabi-run.log");
+    let log = fs::File::create(&log_path).map_err(|e| format!("Cannot create run log: {e}"))?;
+    let log_err = log.try_clone().map_err(|e| format!("Cannot create run log: {e}"))?;
+
+    let chain = split_command_chain(&run_command);
+    let (last, setup) = chain.split_last().ok_or_else(|| "Command is empty".to_string())?;
+    for argv in setup {
+        let status = toolchain_command(argv)
+            .current_dir(&project_dir)
+            .status()
+            .await
+            .map_err(|e| format!("Failed to spawn '{}': {e}", argv[0]))?;
+        if !status.success() {
+            return Err(format!("'{}' exited with {status}", argv.join(" ")));
+        }
+    }
+
+    let mut std_cmd = std::process::Command::new(if cfg!(target_os = "windows") { "cmd" } else { &last[0] });
+    if cfg!(target_os = "windows") {
+        std_cmd.arg("/C").args(last);
+    } else {
+        std_cmd.args(&last[1..]);
+    }
+    let child = std_cmd
+        .current_dir(&project_dir)
+        .stdin(std::process::Stdio::null())
+        .stdout(log)
+        .stderr(log_err)
+        .spawn()
+        .map_err(|e| format!("Failed to launch '{run_command}': {e}"))?;
+
+    Ok(LaunchResult {
+        command: run_command,
+        cwd: project_dir.to_string_lossy().to_string(),
+        pid: Some(child.id()),
+        log_file: log_path.to_string_lossy().to_string(),
+        installed_dependencies,
+    })
+}
+
+/// Returns the tail of a launched project's run log.
+#[tauri::command]
+async fn read_launch_log(slug: String) -> Result<String, String> {
+    let builds_dir = resolve_builds_directory()?;
+    let path = builds_dir.join(sanitize_project_slug(&slug)).join(".calabi-run.log");
+    let text = fs::read_to_string(&path).unwrap_or_default();
+    let start = text.len().saturating_sub(8000);
+    let start = (start..text.len()).find(|i| text.is_char_boundary(*i)).unwrap_or(text.len());
+    Ok(text[start..].to_string())
+}
+
 /// Executes a developer toolchain command inside a build directory after passing guardrail verification.
 #[tauri::command]
 async fn execute_guarded_command(
@@ -697,24 +846,28 @@ async fn execute_guarded_command(
         .map_err(|e| format!("Failed to ensure working directory {:?}: {e}", working_dir))?;
 
     let started = Instant::now();
-    let parts: Vec<&str> = command.split_whitespace().collect();
-    let (program, args) = parts
-        .split_first()
-        .ok_or_else(|| "Command is empty".to_string())?;
+    let chain = split_command_chain(&command);
+    if chain.is_empty() {
+        return Err("Command is empty".to_string());
+    }
 
-    let child_future = Command::new(program)
-        .args(args)
-        .current_dir(&working_dir)
-        .output();
-
-    let output = tokio::time::timeout(Duration::from_secs(45), child_future)
-        .await
-        .map_err(|_| format!("Command timed out after 45s: {command}"))?
-        .map_err(|e| format!("Failed to spawn '{program}': {e}"))?;
-
-    let exit_code = output.status.code().unwrap_or(-1);
-    let stdout = String::from_utf8_lossy(&output.stdout).to_string();
-    let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+    let mut exit_code = 0;
+    let mut stdout = String::new();
+    let mut stderr = String::new();
+    for argv in &chain {
+        let timeout_secs = if is_install_command(argv) { 600 } else { 180 };
+        let child_future = toolchain_command(argv).current_dir(&working_dir).output();
+        let output = tokio::time::timeout(Duration::from_secs(timeout_secs), child_future)
+            .await
+            .map_err(|_| format!("Command timed out after {timeout_secs}s: {}", argv.join(" ")))?
+            .map_err(|e| format!("Failed to spawn '{}': {e}", argv[0]))?;
+        exit_code = output.status.code().unwrap_or(-1);
+        stdout.push_str(&String::from_utf8_lossy(&output.stdout));
+        stderr.push_str(&String::from_utf8_lossy(&output.stderr));
+        if exit_code != 0 {
+            break;
+        }
+    }
 
     Ok(GuardedCommandResult {
         command,
@@ -1045,7 +1198,9 @@ fn main() {
             inspect_pc_directory,
             read_pc_file,
             write_pc_file,
-            execute_guarded_command
+            execute_guarded_command,
+            launch_build_project,
+            read_launch_log
         ])
         .run(tauri::generate_context!())
         .expect("error while running Calabi-Yau AI Platform Tauri application");

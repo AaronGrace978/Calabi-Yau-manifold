@@ -140,6 +140,41 @@ const BLOCKED_COMMAND_PATTERNS: &[&str] = &[
     "del /f /s /q c:",
 ];
 
+/// Splits a policy-approved command into `&&` segments of argv, honoring simple quotes.
+pub fn split_command_chain(command: &str) -> Vec<Vec<String>> {
+    command
+        .split("&&")
+        .map(|segment| {
+            let mut args = Vec::new();
+            let mut current = String::new();
+            let mut quote: Option<char> = None;
+            let mut has_token = false;
+            for ch in segment.trim().chars() {
+                match quote {
+                    Some(q) if ch == q => quote = None,
+                    Some(_) => current.push(ch),
+                    None if ch == '"' || ch == '\'' => {
+                        quote = Some(ch);
+                        has_token = true;
+                    }
+                    None if ch.is_whitespace() => {
+                        if has_token || !current.is_empty() {
+                            args.push(std::mem::take(&mut current));
+                            has_token = false;
+                        }
+                    }
+                    None => current.push(ch),
+                }
+            }
+            if has_token || !current.is_empty() {
+                args.push(current);
+            }
+            args
+        })
+        .filter(|argv| !argv.is_empty())
+        .collect()
+}
+
 /// Sanitizes a relative file path inside a build project (e.g. `src/main.js`, `package.json`),
 /// rejecting `..`, root prefixes, or blocked credential filenames.
 pub fn sanitize_relative_project_path(rel_path: &str) -> Result<PathBuf, String> {
@@ -291,6 +326,14 @@ pub fn evaluate_command_policy(command: &str, mode: GuardrailMode) -> PolicyVerd
         if seg_trimmed.is_empty() {
             continue;
         }
+        if seg_trimmed.contains(['&', '>', '<', '\n', '\r', '^']) {
+            return PolicyVerdict {
+                allowed: false,
+                mode,
+                reason: "Redirection, background '&', and shell escape characters are blocked; use single commands or '&&'".to_string(),
+                sanitized_target: trimmed.to_string(),
+            };
+        }
         if seg_trimmed.contains(';') || seg_trimmed.contains('|') {
             return PolicyVerdict {
                 allowed: false,
@@ -419,6 +462,20 @@ mod tests {
         assert!(
             !evaluate_command_policy("node -e $(whoami)", GuardrailMode::WorkspaceGuarded).allowed
         );
+    }
+
+    #[test]
+    fn splits_command_chains_and_blocks_shell_metachars() {
+        assert_eq!(
+            split_command_chain("npm install && node \"my app.mjs\" --flag"),
+            vec![
+                vec!["npm".to_string(), "install".to_string()],
+                vec!["node".to_string(), "my app.mjs".to_string(), "--flag".to_string()],
+            ]
+        );
+        for bad in ["npm test > out.txt", "npm start & calc", "node a.js ^& calc"] {
+            assert!(!evaluate_command_policy(bad, GuardrailMode::WorkspaceGuarded).allowed, "{bad}");
+        }
     }
 
     #[test]
