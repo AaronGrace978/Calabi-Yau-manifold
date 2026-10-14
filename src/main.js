@@ -15,6 +15,7 @@ import {
   analyzeBuildIntent,
   generateFrontierWitnessDossierHtml,
   mintProofCarryingCertificate,
+  runLlmBuildHarness,
 } from './builder/index.js';
 
 const isTauriDesktop =
@@ -900,8 +901,17 @@ function renderBuildStagesLog(stages = [], novelty = null) {
     const row = document.createElement('div');
     row.style.padding = '3px 6px';
     row.style.borderBottom = '1px solid rgba(255,255,255,0.06)';
-    const color = st.status === 'PASS' ? '#38ef7d' : '#ffb84d';
-    row.innerHTML = `<strong style="color:${color};">[${st.status}]</strong> <span>${st.label}:</span> <span style="color:#8ea4c8;">${st.detail}</span>`;
+    const color = st.status === 'PASS' ? '#38ef7d' : st.status === 'FAIL' ? '#ff5c7a' : st.status === 'RUN' ? '#00f3ff' : '#ffb84d';
+    const strong = document.createElement('strong');
+    strong.style.color = color;
+    strong.textContent = `[${st.status}] `;
+    const label = document.createElement('span');
+    label.textContent = `${st.label}: `;
+    const detail = document.createElement('span');
+    detail.style.color = '#8ea4c8';
+    detail.style.whiteSpace = 'pre-wrap';
+    detail.textContent = st.detail;
+    row.append(strong, label, detail);
     dom.builderStagesLog.appendChild(row);
   }
 }
@@ -942,6 +952,171 @@ function runCodeInSandbox(rawCode, title = 'custom-live-build', fallbackPrompt =
   dom.launcherTitle.textContent = `LIVE BUILD // ${title.toUpperCase()}`;
 }
 
+const buildCollectors = new Map();
+
+/** Runs one full (non-chat) completion against the selected provider and returns its text. */
+async function completeWithActiveModel(system, user, onToken = () => {}) {
+  const provider = getActiveProvider();
+  const model = getSelectedModelSlug();
+  const apiKey = dom.apiKeyInput.value.trim() || loadProviderConfig(provider.id).apiKey || '';
+  const endpoint = dom.endpointInput.value.trim() || loadProviderConfig(provider.id).endpoint || '';
+  const runId = `build-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+  let text = '';
+  buildCollectors.set(runId, {
+    onToken(tok) {
+      text += tok;
+      onToken(text.length);
+    },
+  });
+  const sampling = { temperature: 0.4 };
+  try {
+    if (isTauriDesktop) {
+      const full = await invoke('generate_calabi_yau_response', {
+        prompt: user,
+        provider: provider.id,
+        model,
+        apiKey: apiKey || null,
+        endpoint: endpoint || null,
+        runId,
+        sampling,
+        systemPrompt: system,
+      });
+      return typeof full === 'string' && full.length >= text.length ? full : text;
+    }
+    await runBrowserStream(runId, user, provider, { model, apiKey, endpoint }, sampling, null, system);
+    return text;
+  } finally {
+    buildCollectors.delete(runId);
+  }
+}
+
+/**
+ * Loads the preview in an invisible sandboxed iframe and reports uncaught errors, failed
+ * promise rejections, console.error calls, and a blank body.
+ */
+function probePreviewRuntime(html, waitMs = 3500) {
+  return new Promise((resolve) => {
+    const token = `probe-${Math.random().toString(36).slice(2)}`;
+    const capture = `<script>(function(){var T=${JSON.stringify(token)};function s(m){try{parent.postMessage({__probe:T,msg:String(m).slice(0,400)},'*')}catch(e){}}
+window.addEventListener('error',function(e){if(e.message)s('Uncaught '+e.message+(e.lineno?' (line '+e.lineno+')':''));else if(e.target&&e.target.src)s('Failed to load resource '+e.target.src)},true);
+window.addEventListener('unhandledrejection',function(e){s('Unhandled promise rejection: '+(e.reason&&e.reason.message||e.reason))});
+var ce=console.error;console.error=function(){s('console.error: '+Array.prototype.join.call(arguments,' '));return ce.apply(console,arguments)};
+window.addEventListener('load',function(){setTimeout(function(){var b=document.body;var t=b?(b.innerText||'').trim().length:0;var v=b?b.querySelectorAll('canvas,svg,img,video,button,input').length:0;if(t<20&&v===0)s('Page renders blank (no visible text or elements after load)');parent.postMessage({__probe:T,done:true},'*')},1200)})})();<\/script>`;
+    const instrumented = /<head[^>]*>/i.test(html)
+      ? html.replace(/<head[^>]*>/i, (m) => `${m}${capture}`)
+      : `${capture}${html}`;
+    const errors = [];
+    const frame = document.createElement('iframe');
+    frame.setAttribute('sandbox', 'allow-scripts');
+    frame.style.cssText = 'position:fixed;left:-10000px;top:0;width:1280px;height:800px;opacity:0;pointer-events:none;';
+    let finished = false;
+    const finish = () => {
+      if (finished) return;
+      finished = true;
+      window.removeEventListener('message', onMsg);
+      frame.remove();
+      resolve([...new Set(errors)].slice(0, 12));
+    };
+    const onMsg = (e) => {
+      if (!e.data || e.data.__probe !== token) return;
+      if (e.data.msg) errors.push(`Runtime (browser preview): ${e.data.msg}`);
+      if (e.data.done) setTimeout(finish, 300);
+    };
+    window.addEventListener('message', onMsg);
+    document.body.appendChild(frame);
+    frame.srcdoc = instrumented;
+    setTimeout(finish, waitMs + 1500);
+  });
+}
+
+function canUseLiveModel() {
+  const provider = getActiveProvider();
+  const apiKey = dom.apiKeyInput.value.trim() || loadProviderConfig(provider.id).apiKey || '';
+  return Boolean(apiKey) || provider.id === 'ollama-local' || /localhost|127\.0\.0\.1/.test(provider.defaultEndpoint || '') || isTauriDesktop;
+}
+
+async function runHarnessForPrompt(effectivePrompt, templateOverride, previousBuilds, guardrailMode, onStages) {
+  const intent = analyzeBuildIntent(effectivePrompt, templateOverride, previousBuilds.map((b) => b.slug));
+  const stages = [];
+  let live = null;
+  const push = (entry) => {
+    stages.push({ ...entry, timestampMs: Date.now() });
+    onStages(stages);
+  };
+  const setLive = (label, detail) => {
+    if (live) stages.splice(stages.indexOf(live), 1);
+    live = label ? { id: 'live', label, status: 'RUN', detail, timestampMs: Date.now() } : null;
+    if (live) stages.push(live);
+    onStages(stages);
+  };
+  const modelName = `${getActiveProvider().badge} // ${getSelectedModelSlug()}`;
+
+  const runtimeCheck = async (files) => {
+    const entry = files.find((f) => f.path === intent.template.entryFile) || files.find((f) => /\.html?$/i.test(f.path));
+    const problems = entry ? await probePreviewRuntime(bundlePreviewHtml(entry.content, files, intent)) : [];
+    if (problems.length || !isTauriDesktop || guardrailMode === 'dry-run') return problems;
+    const pkg = files.find((f) => f.path === 'package.json');
+    const testCmd = pkg && /"test"\s*:/.test(pkg.content) ? 'npm test' : null;
+    if (!testCmd) return problems;
+    try {
+      await invoke('write_build_project', {
+        slug: intent.slug,
+        title: intent.title,
+        template: intent.templateId,
+        prompt: effectivePrompt,
+        entryFile: entry?.path || intent.template.entryFile,
+        files,
+        guardrailMode,
+      });
+      const res = await invoke('execute_guarded_command', { command: testCmd, cwd: intent.slug, guardrailMode });
+      if (res.exitCode !== 0) {
+        return [`"${testCmd}" failed with exit code ${res.exitCode}:\n${`${res.stdout}\n${res.stderr}`.trim().slice(-2500)}`];
+      }
+    } catch (err) {
+      push({ id: 'toolchain', label: 'Toolchain check', status: 'WARN', detail: String(err?.message || err) });
+    }
+    return problems;
+  };
+
+  const result = await runLlmBuildHarness({
+    prompt: effectivePrompt,
+    intent,
+    complete: (system, user) =>
+      completeWithActiveModel(system, user, (chars) => {
+        if (live) {
+          live.detail = `${modelName} streaming… ${chars.toLocaleString()} chars`;
+          onStages(stages);
+        }
+      }),
+    runtimeCheck,
+    maxRepairs: 3,
+    onProgress({ phase, attempt, problems }) {
+      if (phase === 'generate') setLive('Generating project', `${modelName} writing every file for "${effectivePrompt}"`);
+      else if (phase === 'runtime') setLive('Running checks', 'Loading the app in a headless preview and running its tests');
+      else if (phase === 'repair') setLive(`Repair pass ${attempt}`, `Sending ${problems.length} problem(s) back to ${modelName}`);
+      else if (phase === 'checked') {
+        setLive(null);
+        push({
+          id: `check-${attempt}`,
+          label: attempt === 0 ? 'Checks on first draft' : `Checks after repair ${attempt}`,
+          status: problems.length ? 'WARN' : 'PASS',
+          detail: problems.length ? problems.join('\n') : 'Structure, syntax, browser runtime and tests all clean',
+        });
+      }
+    },
+  });
+  setLive(null);
+  if (!result.passed) {
+    push({
+      id: 'harness-result',
+      label: 'Harness result',
+      status: 'FAIL',
+      detail: `Still ${result.problems.length} unresolved problem(s) after ${result.attempts.length - 1} repair pass(es). Files are saved so you can inspect them.`,
+    });
+  }
+  return { intent, files: result.files, stages };
+}
+
 async function executeAutonomousBuildFromPrompt(promptText, templateOverride = 'auto', llmResponseText = '') {
   const effectivePrompt = resolveEffectiveBuilderPrompt(promptText);
   if (dom.builderPromptInput && isConversationalFillerPrompt(dom.builderPromptInput.value)) {
@@ -950,10 +1125,38 @@ async function executeAutonomousBuildFromPrompt(promptText, templateOverride = '
   const guardrailMode = dom.builderGuardrailSelect?.value || 'workspace-guarded';
   const previousBuilds = getSavedBuildHistory();
 
+  let harness = null;
+  let priorStages = [];
+  if (!llmResponseText && canUseLiveModel()) {
+    if (dom.btnBuilderSynthesize) dom.btnBuilderSynthesize.disabled = true;
+    try {
+      harness = await runHarnessForPrompt(effectivePrompt, templateOverride, previousBuilds, guardrailMode, (s) =>
+        renderBuildStagesLog(s)
+      );
+      priorStages = harness.stages;
+    } catch (err) {
+      priorStages = [
+        {
+          id: 'llm-error',
+          label: 'Model call failed',
+          status: 'FAIL',
+          detail: `${getActiveProvider().badge} // ${getSelectedModelSlug()}: ${err?.message || err}. Set the API key / endpoint, then rebuild. Showing offline template instead.`,
+          timestampMs: Date.now(),
+        },
+      ];
+      renderBuildStagesLog(priorStages);
+    } finally {
+      if (dom.btnBuilderSynthesize) dom.btnBuilderSynthesize.disabled = false;
+    }
+  }
+
   const builtProject = await runAutonomousBuildLoop({
     prompt: effectivePrompt,
     templateId: templateOverride,
     llmResponseText,
+    llmFiles: harness?.files?.length ? harness.files : null,
+    intent: harness?.intent || null,
+    priorStages,
     guardrailMode,
     previousBuilds,
     tauriInvoke: isTauriDesktop ? invoke : null,
@@ -1308,6 +1511,48 @@ dom.btnLauncherSaveDisk.addEventListener('click', async () => {
   dom.launcherStatusPill.textContent = `SAVED: ${info.path}`;
 });
 
+const btnLauncherRunApp = document.getElementById('btn-launcher-run-app');
+if (btnLauncherRunApp) {
+  btnLauncherRunApp.addEventListener('click', async () => {
+    const project = activeCompiledProject;
+    if (!project) return;
+    const out = dom.pcCommandOutput;
+    if (!isTauriDesktop) {
+      if (out) out.textContent = 'Launching on your machine needs the desktop app. In the browser, the preview pane is the running app.';
+      return;
+    }
+    const guardrailMode = dom.builderGuardrailSelect?.value || 'workspace-guarded';
+    btnLauncherRunApp.disabled = true;
+    try {
+      if (out) out.textContent = `Saving and launching ${project.slug} (first launch runs npm install, this can take a minute)...`;
+      await invoke('write_build_project', {
+        slug: project.slug,
+        title: project.title,
+        template: project.templateId,
+        prompt: project.prompt,
+        entryFile: project.entryFile,
+        files: project.files,
+        guardrailMode,
+      });
+      const res = await invoke('launch_build_project', { slug: project.slug, command: null, guardrailMode });
+      if (out) out.textContent = `[LAUNCHED pid ${res.pid}] ${res.command} in ${res.cwd}${res.installedDependencies ? ' (dependencies installed)' : ''}\nLog: ${res.logFile}`;
+      dom.launcherStatusPill.textContent = `RUNNING: ${res.command}`;
+      setTimeout(async () => {
+        try {
+          const log = await invoke('read_launch_log', { slug: project.slug });
+          if (out && log.trim()) out.textContent += `\n--- output ---\n${log.slice(-1500)}`;
+        } catch {
+          // Log is best-effort.
+        }
+      }, 5000);
+    } catch (err) {
+      if (out) out.textContent = `[LAUNCH FAILED] ${err?.message || err}`;
+    } finally {
+      btnLauncherRunApp.disabled = false;
+    }
+  });
+}
+
 dom.btnLauncherNativeWin.addEventListener('click', async () => {
   const content =
     activeCompiledProject?.previewHtml ||
@@ -1504,6 +1749,11 @@ function createChatBubble(role, initialText = '', badgeText = '', lane = null) {
 
 /** Routes one streamed token into its lane's chat bubble and the instrument. */
 function handleStreamToken(runId, { token, thinking = false, tMs }) {
+  const collector = buildCollectors.get(runId);
+  if (collector) {
+    if (token && !thinking) collector.onToken(token);
+    return;
+  }
   const session = laneSessions.get(runId);
   if (!session || !token) return;
 
