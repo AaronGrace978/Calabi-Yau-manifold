@@ -85,12 +85,15 @@ export async function runAutonomousBuildLoop({
   prompt,
   templateId = 'auto',
   llmResponseText = '',
+  llmFiles = null,
+  intent = null,
+  priorStages = [],
   guardrailMode = 'workspace-guarded',
   previousBuilds = [],
   tauriInvoke = null,
   onStageUpdate = null,
 }) {
-  const stages = [];
+  const stages = [...priorStages];
   const recordStage = (id, label, status, detail) => {
     const entry = { id, label, status, detail, timestampMs: Date.now() };
     stages.push(entry);
@@ -103,6 +106,8 @@ export async function runAutonomousBuildLoop({
   const compiled = compileApplicationProject(prompt, {
     templateId,
     llmResponseText,
+    llmFiles,
+    intent,
     previousBuilds,
   });
 
@@ -116,9 +121,11 @@ export async function runAutonomousBuildLoop({
   // Stage 2: Template & Multi-File Scaffold
   recordStage(
     'template-scaffold',
-    'Template Architecture Selection',
-    'PASS',
-    `${compiled.templateLabel} — ${compiled.files.length} project files prepared`
+    compiled.authoredByLlm ? 'LLM-Authored Project' : 'Template Architecture Selection',
+    compiled.authoredByLlm ? 'PASS' : 'WARN',
+    compiled.authoredByLlm
+      ? `${compiled.files.length} files written by the model (${compiled.files.map((f) => f.path).join(', ')})`
+      : `${compiled.templateLabel} — offline template scaffold (${compiled.files.length} files). Configure a model + API key for a real build.`
   );
 
   // Stage 3: Self-Healing Verification
@@ -208,8 +215,8 @@ export async function runAutonomousBuildLoop({
       recordStage(
         'toolchain-verify',
         `Toolchain Verification (${compiled.verifyCommand})`,
-        'PASS',
-        `Static verification complete (${err?.message || 'runtime check skipped'})`
+        'WARN',
+        `Could not run: ${err?.message || err}`
       );
     }
   } else {

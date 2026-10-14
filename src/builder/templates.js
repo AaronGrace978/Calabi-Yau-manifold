@@ -164,7 +164,7 @@ export function selectTemplateForPrompt(prompt = '', explicitTemplateId = 'auto'
   const lower = String(prompt || '').toLowerCase();
 
   // Check explicit high-priority matches first
-  if (/\belectron\b|\bdesktop app\b|\bpreload\b|\bcontextbridge\b|\bipcmain\b/.test(lower)) {
+  if (/\belectr[a-z]{0,3}n\b|\belectorn\b|\bdesktop (?:app|application)\b|\bpreload\b|\bcontextbridge\b|\bipcmain\b/.test(lower)) {
     return PROJECT_TEMPLATES.find((t) => t.id === 'electron-desktop');
   }
   if (/\btauri\b|\bcargo\b|\brust desktop\b/.test(lower)) {

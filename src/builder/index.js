@@ -10,6 +10,15 @@ export {
   bundlePreviewHtml,
 } from './appCompiler.js';
 export {
+  buildHarnessSystemPrompt,
+  buildHarnessUserPrompt,
+  buildRepairPrompt,
+  parseHarnessFiles,
+  staticCheckProject,
+  checkJsSyntax,
+  runLlmBuildHarness,
+} from './llmBuildHarness.js';
+export {
   verifyAndSelfHealProject,
   runAutonomousBuildLoop,
   isApplicationBuildPrompt,

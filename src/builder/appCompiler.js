@@ -575,12 +575,45 @@ export function compileApplicationProject(prompt, options = {}) {
   const {
     templateId = 'auto',
     llmResponseText = '',
+    llmFiles = null,
     previousBuilds = [],
+    intent: providedIntent = null,
   } = options;
 
   const previousSlugs = previousBuilds.map((b) => b.slug).filter(Boolean);
-  const intent = analyzeBuildIntent(prompt, templateId, previousSlugs);
+  const intent = providedIntent || analyzeBuildIntent(prompt, templateId, previousSlugs);
   const entryPath = intent.template.entryFile;
+
+  const authoredFiles = Array.isArray(llmFiles) && llmFiles.length > 0
+    ? llmFiles
+    : parseMultiFileResponse(llmResponseText, entryPath).filter((f) => f.path && f.content);
+  const authoredEntry =
+    authoredFiles.find((f) => f.path === entryPath) || authoredFiles.find((f) => /\.html?$/i.test(f.path));
+  if (authoredEntry && authoredEntry.content.trim().length > 20) {
+    const files = authoredFiles.map(({ path, content }) => ({ path, content }));
+    const previewHtml = bundlePreviewHtml(authoredEntry.content, files, intent);
+    const novelty = verifyBuildNovelty(
+      { slug: intent.slug, prompt: intent.prompt, templateId: intent.templateId, files },
+      previousBuilds
+    );
+    return {
+      slug: intent.slug,
+      title: intent.title,
+      prompt: intent.prompt,
+      templateId: intent.templateId,
+      templateLabel: intent.template.label,
+      entryFile: authoredEntry.path,
+      verifyCommand: files.some((f) => f.path === 'package.json' && /"test"\s*:/.test(f.content))
+        ? 'npm test'
+        : intent.template.defaultVerifyCommand,
+      runCommand: intent.template.defaultRunCommand,
+      intent,
+      files,
+      previewHtml,
+      novelty,
+      authoredByLlm: true,
+    };
+  }
 
   // Generate base template files tailored to `intent`
   const templateFiles = generateTemplateFiles(intent);
