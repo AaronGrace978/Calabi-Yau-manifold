@@ -1,10 +1,22 @@
-# Calabi-Yau AI Platform (v0.5.0)
+# Calabi-Yau AI Platform (v0.6.0)
 
 <img width="1376" height="768" alt="image" src="https://github.com/user-attachments/assets/6f60a260-703c-48b7-ad7d-91bcc959fbdf" />
 
 A borderless, cyberpunk desktop & scientific AI platform built with **Rust + Tauri**, **Three.js / WebGL**, an **Autonomous Multi-File Application Builder & Guarded PC Harness (`~/CalabiYauProjects/builds/`)**, a **2D–11D Higher-Dimensional Differential Geometry & Topology Engine**, a **Frontier AI Mathematical Witness Engine** (Persistent Homology, Fisher-Rao Information Geometry, Pancharatnam-Berry Holonomy, Symbolic Law Discovery, and Merkle Proof-Carrying Certificates), and a **Universal Multi-Provider Quantum LLM Bridge** supporting **Ollama Cloud (`https://ollama.com/api/chat`)**, **17 Frontier Cloud AI Providers**, and **Ollama Local (`http://localhost:11434`)**.
 
 ---
+
+## v0.6.0: The Builder Actually Builds What You Ask For
+
+**AUTONOMOUS BUILD & VERIFY** now sends your request to the selected provider/model (e.g. Ollama Cloud `glm-5.3`), which writes the entire project. The harness then checks it and loops back to the model with every failure (up to 3 repair passes):
+
+1. **Static checks**: entry file present and complete, every `<script src>`/`<link href>`/relative `import` resolves to a real file, JS syntax, valid JSON, no elided `// ...` placeholders, and for Electron a valid `package.json` (`main`, `start`, `electron` devDependency).
+2. **Browser runtime check**: the bundled app loads in a hidden sandboxed iframe; uncaught errors, rejected promises, `console.error`, and blank pages are reported back to the model.
+3. **Toolchain check** (desktop app): files are written to `~/CalabiYauProjects/builds/<slug>/` and `npm test` runs; failing output goes back to the model.
+
+**LAUNCH APP ▶** installs dependencies (`npm install`) and starts the project detached (`npm start` → Electron, `python app.py`, `node server.mjs`, or a static server), logging to `.calabi-run.log`. Commands now work on Windows (`npm`/`npx` `.cmd` shims) and `&&` chains run step by step without a shell.
+
+Without a model/API key the builder falls back to the offline template scaffold and says so in the pipeline log.
 
 ## What Makes v0.5.0 Unique (Beyond Frontier Black-Box Interfaces)
 

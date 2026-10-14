@@ -620,7 +620,7 @@ export function mintProofCarryingCertificate({
 
   const certificateBody = {
     schema: 'calabi-yau.proof-carrying-artifact/v1',
-    platformVersion: '0.5.0',
+    platformVersion: '0.6.0',
     issuedAt,
     artifact: {
       slug: project?.slug || 'unknown-artifact',
@@ -758,7 +758,7 @@ export function generateFrontierWitnessDossierHtml({
 
   const payloadJson = JSON.stringify(
     {
-      platform: 'Calabi-Yau AI Platform v0.5.0 — Frontier Witness Dossier',
+      platform: 'Calabi-Yau AI Platform v0.6.0 — Frontier Witness Dossier',
       generatedAt: new Date().toISOString(),
       provider,
       model,
@@ -775,7 +775,7 @@ export function generateFrontierWitnessDossierHtml({
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
-  <title>Frontier AI Witness Dossier — Calabi-Yau Platform v0.5.0</title>
+  <title>Frontier AI Witness Dossier — Calabi-Yau Platform v0.6.0</title>
   <style>
     :root {
       --bg: #040710;
@@ -880,7 +880,7 @@ export function generateFrontierWitnessDossierHtml({
 <body>
   <header>
     <div>
-      <span class="badge">FRONTIER MATHEMATICAL WITNESS DOSSIER // v0.5.0</span>
+      <span class="badge">FRONTIER MATHEMATICAL WITNESS DOSSIER // v0.6.0</span>
       <h1>CALABI-YAU AI PLATFORM — TOPOLOGICAL &amp; CRYPTOGRAPHIC VERIFICATION</h1>
       <div class="sub">Active Space: ${inv.name} · Provider: ${provider} / ${model}</div>
     </div>

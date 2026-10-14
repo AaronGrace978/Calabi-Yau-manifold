@@ -7,9 +7,9 @@ on:
   workflow_dispatch:
     inputs:
       tag_name:
-        description: 'Release tag version (e.g. v0.5.0)'
+        description: 'Release tag version (e.g. v0.6.0)'
         required: false
-        default: 'v0.5.0'
+        default: 'v0.6.0'
 
 permissions:
   contents: write
@@ -48,7 +48,7 @@ jobs:
           elif [[ -n "${{ inputs.tag_name }}" ]]; then
             echo "tag=${{ inputs.tag_name }}" >> "$GITHUB_OUTPUT"
           else
-            echo "tag=v0.5.0" >> "$GITHUB_OUTPUT"
+            echo "tag=v0.6.0" >> "$GITHUB_OUTPUT"
           fi
 
       - name: Install Linux system dependencies (GTK3 / WebKit2GTK / AppIndicator)
