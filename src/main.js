@@ -1104,9 +1104,21 @@ async function runHarnessForPrompt(effectivePrompt, templateOverride, previousBu
       }),
     runtimeCheck,
     maxRepairs: 3,
-    onProgress({ phase, attempt, problems }) {
+    onProgress({ phase, attempt, problems, path: filePath }) {
       if (phase === 'generate') setLive('Generating project', `${modelName} writing every file for "${effectivePrompt}"`);
       else if (phase === 'runtime') setLive('Running checks', 'Loading the app in a headless preview and running its tests');
+      else if (phase === 'fallback') push({ id: 'fallback', label: 'One-shot output unusable', status: 'WARN', detail: `${modelName} overran its output limit; switching to plan-then-write (one call per file)` });
+      else if (phase === 'plan') setLive('Planning', `${modelName} writing the file manifest and shared contract`);
+      else if (phase === 'file') setLive(`Writing ${filePath}`, `${modelName} writing ${filePath}`);
+      else if (phase === 'fallback') push({ id: 'fallback', label: 'One-shot output unusable', status: 'WARN', detail: `${modelName} overran its output limit; switching to plan-then-write (one call per file)` });
+      else if (phase === 'plan') setLive('Planning', `${modelName} writing the file manifest and shared contract`);
+      else if (phase === 'file') setLive(`Writing ${filePath}`, `${modelName} writing ${filePath}`);
+      else if (phase === 'fallback') push({ id: 'fallback', label: 'One-shot output unusable', status: 'WARN', detail: `${modelName} overran its output limit; switching to plan-then-write (one call per file)` });
+      else if (phase === 'plan') setLive('Planning', `${modelName} writing the file manifest and shared contract`);
+      else if (phase === 'file') setLive(`Writing ${filePath}`, `${modelName} writing ${filePath}`);
+      else if (phase === 'fallback') push({ id: 'fallback', label: 'One-shot output unusable', status: 'WARN', detail: `${modelName} overran its output limit; switching to plan-then-write (one call per file)` });
+      else if (phase === 'plan') setLive('Planning', `${modelName} writing the file manifest and shared contract`);
+      else if (phase === 'file') setLive(`Writing ${filePath}`, `${modelName} writing ${filePath}`);
       else if (phase === 'continue') setLive(`Continuing output (${attempt})`, `${modelName} hit its length limit; asking it to continue where it stopped`);
       else if (phase === 'repair') setLive(`Repair pass ${attempt}`, `Sending ${problems.length} problem(s) back to ${modelName}`);
       else if (phase === 'checked') {

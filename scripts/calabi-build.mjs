@@ -192,13 +192,16 @@ async function main() {
     complete: makeCompleter(opts),
     runtimeCheck,
     maxRepairs: opts.repairs,
-    onProgress({ phase, attempt, problems }) {
+    onProgress({ phase, attempt, problems, path: filePath }) {
       if (phase === 'generate') console.log('• generating project');
       if (phase === 'runtime') console.log('• running browser + test checks');
       if (phase === 'checked') {
         console.log(problems.length ? `  ✗ ${problems.length} problem(s):\n${problems.map((p) => `    - ${p.split('\n')[0]}`).join('\n')}` : '  ✓ all checks passed');
       }
       if (phase === 'repair') console.log(`• repair pass ${attempt}`);
+      if (phase === 'fallback') console.log('• one-shot output unusable, switching to plan-then-write (one call per file)');
+      if (phase === 'plan') console.log('• planning file manifest + shared contract');
+      if (phase === 'file') console.log(`  writing ${filePath}`);
       if (phase === 'continue') console.log(`• output was cut off, asking model to continue (${attempt})`);
     },
   });

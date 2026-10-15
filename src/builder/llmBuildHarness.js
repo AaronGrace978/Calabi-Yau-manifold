@@ -301,7 +301,7 @@ export function buildContinuationPrompt(prompt, rawText) {
 /** Calls the model, then keeps asking it to continue while the output looks truncated. */
 async function completeWithContinuation(complete, system, user, prompt, entryFile, onProgress, maxContinuations = 3) {
   let text = await complete(system, user);
-  for (let i = 1; i <= maxContinuations && looksTruncated(text, entryFile); i++) {
+  for (let i = 1; i <= maxContinuations && /<file\s+path\s*=/.test(text) && looksTruncated(text, entryFile); i++) {
     onProgress({ phase: 'continue', attempt: i });
     const more = await complete(system, buildContinuationPrompt(prompt, text));
     if (!more || !more.trim()) break;
@@ -320,6 +320,7 @@ export async function runLlmBuildHarness({
   complete,
   runtimeCheck = null,
   maxRepairs = 3,
+  strategy = 'auto',
   onProgress = () => {},
 }) {
   const system = buildHarnessSystemPrompt(intent);
@@ -327,9 +328,22 @@ export async function runLlmBuildHarness({
   const checkOpts = { entryFile, templateId: intent?.templateId };
   const attempts = [];
 
-  onProgress({ phase: 'generate', attempt: 0 });
-  const firstText = await completeWithContinuation(complete, system, buildHarnessUserPrompt(prompt, intent), prompt, entryFile, onProgress);
-  let files = parseHarnessFiles(firstText, entryFile);
+  let files = [];
+  let mode = strategy;
+  if (mode !== 'per-file') {
+    onProgress({ phase: 'generate', attempt: 0 });
+    const firstText = await completeWithContinuation(complete, system, buildHarnessUserPrompt(prompt, intent), prompt, entryFile, onProgress);
+    files = parseHarnessFiles(firstText, entryFile);
+    const first = staticCheckProject(files, checkOpts);
+    const unusable = files.length === 0 || first.some((p) => /truncated|No files were produced/.test(p)) || looksTruncated(firstText, entryFile);
+    if (mode === 'auto' && unusable) {
+      onProgress({ phase: 'fallback', attempt: 0, problems: first });
+      mode = 'per-file';
+    }
+  }
+  if (mode === 'per-file') {
+    files = await generatePerFile({ complete, system, prompt, intent, entryFile, onProgress, seed: files });
+  }
 
   for (let attempt = 0; ; attempt++) {
     let problems = staticCheckProject(files, checkOpts);
@@ -345,8 +359,141 @@ export async function runLlmBuildHarness({
     }
 
     onProgress({ phase: 'repair', attempt: attempt + 1, problems });
-    const repairText = await completeWithContinuation(complete, system, buildRepairPrompt(prompt, files, problems), prompt, entryFile, onProgress);
-    const patch = parseHarnessFiles(repairText, entryFile);
-    if (patch.length > 0) files = mergeFiles(files, patch);
+    const targets = filesImplicatedBy(problems, files);
+    if (targets.length > 0 && targets.length <= 4) {
+      for (const target of targets) {
+        onProgress({ phase: 'file', attempt: attempt + 1, path: target });
+        const text = await completeWithContinuation(complete, system, buildFileRepairPrompt(prompt, files, problems, target), prompt, entryFile, onProgress);
+        const fixed = parseHarnessFiles(text, entryFile);
+        const own = pickTargetFile(fixed, target, files);
+        if (own) files = mergeFiles(files, [own, ...fixed.filter((f) => f.path !== target && !files.some((g) => g.path === f.path))]);
+      }
+    } else {
+      const repairText = await completeWithContinuation(complete, system, buildRepairPrompt(prompt, files, problems), prompt, entryFile, onProgress);
+      const patch = parseHarnessFiles(repairText, entryFile);
+      if (patch.length > 0) files = mergeFiles(files, patch);
+    }
   }
+}
+
+const PATH_TOKEN_RE = /(?:^|[\s"'`(])\.?\/?((?:[\w.-]+\/)*[\w.-]+\.(?:html?|css|m?js|cjs|json|py|rs|toml|md))\b/g;
+
+/** Project paths (existing or missing-but-referenced) named in check output. */
+export function filesImplicatedBy(problems, files) {
+  const existing = new Set(files.map((f) => f.path));
+  const out = new Set();
+  for (const p of problems) {
+    for (const m of String(p).matchAll(PATH_TOKEN_RE)) {
+      const path = m[1].replace(/^\.?\//, '');
+      const aboutMissing = /not provided|Missing entry/.test(p);
+      if (aboutMissing ? !existing.has(path) : existing.has(path)) out.add(path);
+    }
+  }
+  return [...out].filter((p) => !p.startsWith('http'));
+}
+
+/** The block written for `target`, or a lone block under an unrelated name (models sometimes rename). */
+function pickTargetFile(blocks, target, known) {
+  const exact = blocks.find((f) => f.path === target);
+  if (exact) return exact;
+  if (blocks.length === 1 && !known.some((f) => f.path === blocks[0].path)) {
+    const ext = (p) => p.split('.').pop();
+    if (ext(blocks[0].path) === ext(target)) return { ...blocks[0], path: target };
+  }
+  return null;
+}
+
+function serializeFiles(files) {
+  return files.map((f) => `<file path="${f.path}">\n${f.content}\n</file>`).join('\n\n');
+}
+
+export function buildFileRepairPrompt(prompt, files, problems, target) {
+  return [
+    `Project request: ${prompt}`,
+    '',
+    'Automated checks found these problems:',
+    ...problems.map((p) => `- ${p}`),
+    '',
+    'Current project files:',
+    serializeFiles(files),
+    '',
+    files.some((f) => f.path === target)
+      ? `Rewrite ONLY ${target}, complete and fixed, consistent with the other files.`
+      : `Write ONLY the missing file ${target}, complete, consistent with the other files.`,
+    `Output exactly one block: <file path="${target}">...</file>. Nothing else.`,
+  ].join('\n');
+}
+
+export function buildManifestPrompt(prompt, intent) {
+  return [
+    buildHarnessUserPrompt(prompt, intent),
+    '',
+    'PLANNING STEP. Do not write any code yet. Output exactly two blocks and nothing else:',
+    '<manifest>["index.html","styles.css","app.js", ...]</manifest>  (JSON array of every file path, entry file first, at most 8 files)',
+    '<spec>',
+    'A compact contract (max 400 words) that lets each file be written separately and still fit: page sections and their DOM ids, CSS class names and design tokens (colors, fonts), every module with its exported functions and signatures, data shapes, and what each file is responsible for.',
+    '</spec>',
+  ].join('\n');
+}
+
+export function parseManifest(text) {
+  const raw = String(text || '');
+  let paths = [];
+  const m = raw.match(/<manifest>([\s\S]*?)<\/manifest>/i);
+  if (m) {
+    try {
+      paths = JSON.parse(m[1].trim());
+    } catch {
+      paths = m[1].split(/[\s,\n]+/).map((s) => s.replace(/["'[\]]/g, ''));
+    }
+  }
+  paths = (Array.isArray(paths) ? paths : [])
+    .map((p) => String(p).trim().replace(/^\.?\//, ''))
+    .filter((p) => /^[\w./-]+\.[A-Za-z0-9]+$/.test(p) && !p.includes('..'));
+  const spec = (raw.match(/<spec>([\s\S]*?)(?:<\/spec>|$)/i)?.[1] || '').trim().slice(0, 6000);
+  return { paths: [...new Set(paths)].slice(0, 12), spec };
+}
+
+export function buildSingleFilePrompt(prompt, intent, manifest, written, target) {
+  return [
+    buildHarnessUserPrompt(prompt, intent),
+    '',
+    `All project files: ${manifest.paths.join(', ')}`,
+    'Shared contract every file follows:',
+    manifest.spec || '(none)',
+    '',
+    written.length ? `Files already written (match their ids, classes and exports exactly):\n${serializeFiles(written)}` : '',
+    '',
+    `Now write ONLY ${target}, complete and final. Output exactly one block: <file path="${target}">...</file>. No planning, no commentary.`,
+  ]
+    .filter((l) => l !== '')
+    .join('\n');
+}
+
+const DEFAULT_MANIFEST = {
+  'electron-desktop': ['package.json', 'main.cjs', 'preload.cjs', 'index.html', 'styles.css', 'renderer.js', 'test.mjs'],
+  'fullstack-node-api': ['package.json', 'server.mjs', 'public/index.html', 'public/styles.css', 'public/app.js', 'test-api.mjs'],
+  'python-science-cli': ['app.py', 'index.html', 'README.md'],
+};
+
+/** Plan-then-write: one manifest call, then one focused call per file. */
+async function generatePerFile({ complete, system, prompt, intent, entryFile, onProgress, seed = [] }) {
+  onProgress({ phase: 'plan', attempt: 0 });
+  const manifest = parseManifest(await complete(system, buildManifestPrompt(prompt, intent)));
+  if (manifest.paths.length === 0) {
+    manifest.paths = DEFAULT_MANIFEST[intent?.templateId] || [entryFile, 'styles.css', 'app.js', 'package.json', 'test.mjs'];
+  }
+  if (!manifest.paths.includes(entryFile) && !manifest.paths.some((p) => /\.html?$/.test(p))) manifest.paths.unshift(entryFile);
+
+  const usableSeed = seed.filter((f) => manifest.paths.includes(f.path) && staticCheckProject([f], { entryFile: f.path }).every((p) => !/truncated|syntax error|not valid JSON/.test(p)));
+  let written = [...usableSeed];
+  for (const target of manifest.paths) {
+    if (written.some((f) => f.path === target)) continue;
+    onProgress({ phase: 'file', attempt: 0, path: target });
+    const text = await completeWithContinuation(complete, system, buildSingleFilePrompt(prompt, intent, manifest, written, target), prompt, entryFile, onProgress);
+    const got = parseHarnessFiles(text, entryFile);
+    const own = pickTargetFile(got, target, written);
+    if (own) written = mergeFiles(written, [own]);
+  }
+  return written;
 }

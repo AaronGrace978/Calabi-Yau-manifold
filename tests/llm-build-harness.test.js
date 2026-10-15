@@ -118,6 +118,26 @@ describe('LLM build harness', () => {
     assert.ok(result.files.some((f) => f.path === 'seasons.js'));
   });
 
+  it('falls back to plan-then-write when a model rambles past its output limit', async () => {
+    const calls = [];
+    const result = await runLlmBuildHarness({
+      prompt: 'seasons',
+      intent: analyzeBuildIntent('seasons'),
+      complete: async (_s, user) => {
+        calls.push(user);
+        if (calls.length === 1) return 'Let me think about the design. First I will... '.repeat(50);
+        if (/PLANNING STEP/.test(user)) return '<manifest>["index.html","app.js"]</manifest><spec>h1#t shows seasons</spec>';
+        if (/write ONLY index\.html/.test(user)) return 'ok here:\n<file path="index.html">\n<!DOCTYPE html><html><body><h1 id="t">x</h1><script src="app.js"></script></body></html>\n</file>';
+        if (/write ONLY app\.js/.test(user)) return '<file path="app.js">\ndocument.getElementById("t").textContent = "Spring";\n</file>';
+        return '';
+      },
+    });
+    assert.equal(result.passed, true);
+    assert.deepEqual(result.files.map((f) => f.path), ['index.html', 'app.js']);
+    assert.match(calls[2], /write ONLY index\.html/);
+    assert.match(calls[3], /h1 id="t"/);
+  });
+
   it('routes misspelled Electron requests to the Electron template', () => {
     assert.equal(selectTemplateForPrompt('build an ollama cloud electrojn app with glm 5.3').id, 'electron-desktop');
   });
