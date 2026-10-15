@@ -11,6 +11,8 @@ pub struct SamplingParams {
     pub temperature: Option<f64>,
     pub top_p: Option<f64>,
     pub repetition_penalty: Option<f64>,
+    /// Long-output budget for whole-project builds; `None` keeps provider defaults.
+    pub max_tokens: Option<u32>,
 }
 
 /// One streamed token, timestamped on arrival in Rust (before IPC latency is added).
@@ -191,6 +193,10 @@ pub fn build_payload_with_system(
             if let Some(p) = penalty {
                 options.insert("repeat_penalty".into(), json!(1.0 + p * 0.5));
             }
+            if sampling.max_tokens.is_some() {
+                options.insert("num_ctx".into(), json!(32768));
+                options.insert("num_predict".into(), json!(sampling.max_tokens));
+            }
             if api_url.ends_with("/api/generate") {
                 let mut body = json!({ "model": model, "prompt": prompt, "stream": true, "options": options });
                 if let Some(sys) = sys_trimmed {
@@ -203,18 +209,23 @@ pub fn build_payload_with_system(
                     messages.push(json!({ "role": "system", "content": sys }));
                 }
                 messages.push(json!({ "role": "user", "content": prompt }));
-                json!({
+                let mut body = json!({
                     "model": model,
                     "messages": messages,
                     "stream": true,
                     "options": options
-                })
+                });
+                if sampling.max_tokens.is_some() {
+                    // Reasoning models otherwise spend the whole budget thinking and emit no files.
+                    body["think"] = json!(false);
+                }
+                body
             }
         }
         "anthropic" => {
             let mut body = json!({
                 "model": model,
-                "max_tokens": if sys_trimmed.is_some() { 8192 } else { 4096 },
+                "max_tokens": sampling.max_tokens.unwrap_or(if sys_trimmed.is_some() { 8192 } else { 4096 }),
                 "stream": true,
                 "messages": [{ "role": "user", "content": prompt }]
             });
@@ -231,6 +242,9 @@ pub fn build_payload_with_system(
             config.insert("temperature".into(), json!(temperature.unwrap_or(0.7)));
             if let Some(p) = top_p {
                 config.insert("topP".into(), json!(p));
+            }
+            if let Some(m) = sampling.max_tokens {
+                config.insert("maxOutputTokens".into(), json!(m));
             }
             let mut body = json!({
                 "contents": [{ "role": "user", "parts": [{ "text": prompt }] }],
@@ -303,6 +317,7 @@ mod tests {
             temperature: Some(1.3),
             top_p: Some(0.85),
             repetition_penalty: Some(0.6),
+            max_tokens: None,
         };
         let o = build_payload("ollama-cloud", "m", "p", "https://ollama.com/api/chat", s);
         assert_eq!(o["options"]["temperature"], 1.3);

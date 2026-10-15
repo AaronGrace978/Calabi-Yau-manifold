@@ -97,6 +97,27 @@ describe('LLM build harness', () => {
     assert.match(project.previewHtml, /Spring/);
   });
 
+  it('rejects the React/Vite single-file output seen in the wild and repairs it', async () => {
+    const broken = `The user wants a beautiful landing page. Let me think...\n\`\`\`html\n<!doctype html>\n<html lang="en"><head></head><body><div id="root"></div><script type="module" src="/src/main.jsx"></script></body></html>\n\`\`\`\nHere's a complete, runnable React landing page.`;
+    const problems = staticCheckProject(parseHarnessFiles(broken)).join('\n');
+    assert.match(problems, /src\/main\.jsx/);
+
+    const jsx = staticCheckProject([
+      { path: 'index.html', content: '<!DOCTYPE html><html><body><script type="module" src="app.jsx"></script></body></html>' },
+      { path: 'app.jsx', content: 'export default () => <App />;' },
+    ]).join('\n');
+    assert.match(jsx, /no build step/);
+
+    const replies = [broken, goodWeb];
+    const result = await runLlmBuildHarness({
+      prompt: 'Build me a beautiful Calabi generative UI landing page',
+      intent: analyzeBuildIntent('Build me a beautiful Calabi generative UI landing page'),
+      complete: async () => replies.shift(),
+    });
+    assert.equal(result.passed, true);
+    assert.ok(result.files.some((f) => f.path === 'seasons.js'));
+  });
+
   it('routes misspelled Electron requests to the Electron template', () => {
     assert.equal(selectTemplateForPrompt('build an ollama cloud electrojn app with glm 5.3').id, 'electron-desktop');
   });

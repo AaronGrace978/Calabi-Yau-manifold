@@ -28,7 +28,8 @@ const TEMPLATE_REQUIREMENTS = {
 
 const DEFAULT_REQUIREMENTS = [
   'This is a browser application. Required files: index.html, plus styles.css and app.js (or more modules) referenced from index.html with relative paths. package.json with "scripts": {"start": "npx serve .", "test": "node test.mjs"}, and test.mjs (Node, builtins only) that asserts the files exist and exits non-zero on failure.',
-  'It must run by simply opening index.html: no build step, no bundler, no TypeScript, no JSX. Libraries may be loaded from https://esm.sh or https://unpkg.com via <script type="importmap"> or full URLs.',
+  'It must run by simply opening index.html: no build step, no bundler, no Vite, no TypeScript, no JSX, no .jsx/.tsx files. Even if the user says "React", write plain ES modules (vanilla DOM, or Preact + htm from https://esm.sh). Libraries may be loaded from https://esm.sh or https://unpkg.com via <script type="importmap"> or full URLs.',
+  'Keep the whole project under ~1200 lines in total so it fits in one response. Prefer a few substantial files over many tiny ones; no giant inline data, SVG paths or base64.',
 ];
 
 export function buildHarnessSystemPrompt(intent) {
@@ -41,9 +42,11 @@ export function buildHarnessSystemPrompt(intent) {
     '',
     ...reqs,
     '',
-    'OUTPUT FORMAT (strict): output ONLY files, each introduced by a marker line, with no markdown fences and no prose:',
-    '// === FILE: relative/path.ext ===',
+    'OUTPUT FORMAT (strict). Write each file exactly once, wrapped like this, with no markdown fences inside:',
+    '<file path="relative/path.ext">',
     '<entire file contents>',
+    '</file>',
+    'Anything outside <file> blocks is discarded, so do not plan, draft, or explain. Start with <file path="..."> immediately and write each file once, finished.',
     'Never truncate, never write "..." or "rest of code here". Every file must be complete.',
   ].join('\n');
 }
@@ -59,14 +62,14 @@ export function buildHarnessUserPrompt(prompt, intent) {
 }
 
 export function buildRepairPrompt(prompt, files, problems) {
-  const serialized = files.map((f) => `// === FILE: ${f.path} ===\n${f.content}`).join('\n\n');
+  const serialized = files.map((f) => `<file path="${f.path}">\n${f.content}\n</file>`).join('\n\n');
   return [
     `The project below was built for the request: ${prompt}`,
     '',
     'It has these problems, found by automated checks:',
     ...problems.map((p) => `- ${p}`),
     '',
-    'Fix every problem. Output the COMPLETE corrected contents of every file that needs to change (and any new files), using the same // === FILE: path === markers. Files you do not output are kept as they are.',
+    'Fix every problem. Output the COMPLETE corrected contents of every file that needs to change (and any new files), each wrapped in <file path="...">...</file>. Files you do not output are kept as they are. No commentary.',
     '',
     serialized,
   ].join('\n');
@@ -80,8 +83,22 @@ function cleanFileContent(content) {
     .trim();
 }
 
+const FILE_BLOCK_RE = /<file\s+path\s*=\s*["']([^"'\n]+)["']\s*>\r?\n?([\s\S]*?)<\/file>/g;
+
+/** Parses `<file path>` blocks (last complete copy of each path wins), falling back to markers/fences. */
 export function parseHarnessFiles(text, entryFile = 'index.html') {
-  return parseMultiFileResponse(text, entryFile)
+  const raw = String(text || '');
+  const blocks = new Map();
+  for (const m of raw.matchAll(FILE_BLOCK_RE)) {
+    const path = m[1].trim().replace(/^\.?\//, '');
+    const content = cleanFileContent(m[2]);
+    if (path && content && !path.includes('..')) {
+      blocks.delete(path);
+      blocks.set(path, { path, content });
+    }
+  }
+  if (blocks.size > 0 || /<file\s+path\s*=/.test(raw)) return [...blocks.values()];
+  return parseMultiFileResponse(raw, entryFile)
     .map((f) => ({ path: f.path.replace(/^\.?\//, ''), content: cleanFileContent(f.content) }))
     .filter((f) => f.path && f.content && !f.path.includes('..'));
 }
@@ -168,7 +185,7 @@ export function staticCheckProject(files, { entryFile = 'index.html', templateId
   const byPath = new Map(files.map((f) => [f.path, f]));
 
   if (files.length === 0) {
-    return ['No files were produced. Output files using // === FILE: path === markers.'];
+    return ['No files were produced. Output every file as <file path="...">...</file>, with nothing outside the blocks.'];
   }
 
   const entry = byPath.get(entryFile) || files.find((f) => /(^|\/)index\.html$/i.test(f.path));
@@ -209,6 +226,20 @@ export function staticCheckProject(files, { entryFile = 'index.html', templateId
     }
   }
 
+  if (templateId !== 'tauri-rust-app') {
+    const needsCompiler = files.filter((f) => /\.(?:jsx|tsx|ts|vue|svelte|scss|less)$/i.test(f.path) && !/\.d\.ts$/.test(f.path));
+    if (needsCompiler.length > 0) {
+      problems.push(
+        `${needsCompiler.map((f) => f.path).join(', ')} need a compiler/bundler, but the project must run with no build step. Rewrite them as plain .js ES modules and .css (for React-style components use https://esm.sh/preact + https://esm.sh/htm, or vanilla DOM). Do not use JSX.`
+      );
+    }
+    for (const f of files) {
+      if (/\.(?:m?js)$/.test(f.path) && /(?:^|[\s(,=])<[A-Z][A-Za-z0-9]*[\s/>]/m.test(f.content.replace(/`[\s\S]*?`|'[^'\n]*'|"[^"\n]*"/g, ''))) {
+        problems.push(`${f.path} contains JSX, which browsers cannot run. Use htm tagged templates or DOM APIs.`);
+      }
+    }
+  }
+
   if (templateId === 'electron-desktop') {
     const pkg = byPath.get('package.json');
     let main = 'main.cjs';
@@ -231,6 +262,54 @@ export function staticCheckProject(files, { entryFile = 'index.html', templateId
   return [...new Set(problems)];
 }
 
+/** True when raw model output looks cut off mid-project (length limit, dropped stream). */
+export function looksTruncated(rawText, entryFile = 'index.html') {
+  if (/<file\s+path\s*=/.test(rawText)) {
+    return !/<\/file>/.test(rawText.slice(rawText.lastIndexOf('<file')));
+  }
+  const files = parseHarnessFiles(rawText, entryFile);
+  if (files.length === 0) return /\/\/\s*===\s*FILE:/.test(rawText);
+  const last = files[files.length - 1];
+  if (/\.html?$/i.test(last.path)) return !/<\/html>\s*$/i.test(last.content);
+  if (/\.(?:m?js|cjs)$/.test(last.path)) {
+    const err = checkJsSyntax(last.content, last.path);
+    return Boolean(err && /end of input|Unterminated|missing \}|expected/i.test(err));
+  }
+  if (/\.json$/.test(last.path)) {
+    try {
+      JSON.parse(last.content);
+      return false;
+    } catch {
+      return true;
+    }
+  }
+  if (/\.css$/.test(last.path)) return (last.content.match(/\{/g) || []).length > (last.content.match(/\}/g) || []).length;
+  return false;
+}
+
+export function buildContinuationPrompt(prompt, rawText) {
+  return [
+    `You were writing a project for: ${prompt}`,
+    'Your output was cut off by the length limit. Here are the LAST characters you wrote:',
+    '<<<TAIL',
+    rawText.slice(-3000),
+    'TAIL>>>',
+    'Continue EXACTLY from the next character after the tail: output only the raw continuation text (no preamble, no reasoning, no repetition of the tail). Close the current file with </file>, then write any remaining files as <file path="...">...</file> and stop.',
+  ].join('\n');
+}
+
+/** Calls the model, then keeps asking it to continue while the output looks truncated. */
+async function completeWithContinuation(complete, system, user, prompt, entryFile, onProgress, maxContinuations = 3) {
+  let text = await complete(system, user);
+  for (let i = 1; i <= maxContinuations && looksTruncated(text, entryFile); i++) {
+    onProgress({ phase: 'continue', attempt: i });
+    const more = await complete(system, buildContinuationPrompt(prompt, text));
+    if (!more || !more.trim()) break;
+    text += more.replace(/^\s*```[a-zA-Z0-9_-]*\s*\r?\n/, '');
+  }
+  return text;
+}
+
 /**
  * Generates a project with `complete(system, user) -> Promise<string>`, then loops:
  * static checks -> optional `runtimeCheck(files)` -> repair, up to `maxRepairs` times.
@@ -249,7 +328,7 @@ export async function runLlmBuildHarness({
   const attempts = [];
 
   onProgress({ phase: 'generate', attempt: 0 });
-  const firstText = await complete(system, buildHarnessUserPrompt(prompt, intent));
+  const firstText = await completeWithContinuation(complete, system, buildHarnessUserPrompt(prompt, intent), prompt, entryFile, onProgress);
   let files = parseHarnessFiles(firstText, entryFile);
 
   for (let attempt = 0; ; attempt++) {
@@ -266,7 +345,7 @@ export async function runLlmBuildHarness({
     }
 
     onProgress({ phase: 'repair', attempt: attempt + 1, problems });
-    const repairText = await complete(system, buildRepairPrompt(prompt, files, problems));
+    const repairText = await completeWithContinuation(complete, system, buildRepairPrompt(prompt, files, problems), prompt, entryFile, onProgress);
     const patch = parseHarnessFiles(repairText, entryFile);
     if (patch.length > 0) files = mergeFiles(files, patch);
   }

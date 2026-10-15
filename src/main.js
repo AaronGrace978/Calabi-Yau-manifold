@@ -955,20 +955,35 @@ function runCodeInSandbox(rawCode, title = 'custom-live-build', fallbackPrompt =
 const buildCollectors = new Map();
 
 /** Runs one full (non-chat) completion against the selected provider and returns its text. */
-async function completeWithActiveModel(system, user, onToken = () => {}) {
+/** When set, harness model calls use this chat lane instead of the toolbar selection. */
+let harnessLane = null;
+
+function harnessTarget() {
+  if (harnessLane) return harnessLane;
   const provider = getActiveProvider();
-  const model = getSelectedModelSlug();
-  const apiKey = dom.apiKeyInput.value.trim() || loadProviderConfig(provider.id).apiKey || '';
-  const endpoint = dom.endpointInput.value.trim() || loadProviderConfig(provider.id).endpoint || '';
+  return {
+    provider,
+    model: getSelectedModelSlug(),
+    apiKey: dom.apiKeyInput.value.trim() || loadProviderConfig(provider.id).apiKey || '',
+    endpoint: dom.endpointInput.value.trim() || loadProviderConfig(provider.id).endpoint || '',
+    instrumentRunId: null,
+  };
+}
+
+async function completeWithActiveModel(system, user, onToken = () => {}) {
+  const { provider, model, apiKey, endpoint, instrumentRunId } = harnessTarget();
   const runId = `build-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
   let text = '';
+  const t0 = performance.now();
   buildCollectors.set(runId, {
-    onToken(tok) {
+    onToken(tok, thinking) {
+      if (instrumentRunId) instrumentConsole.pushToken(instrumentRunId, { token: tok, thinking, tMs: performance.now() - t0 });
+      if (thinking) return;
       text += tok;
       onToken(text.length);
     },
   });
-  const sampling = { temperature: 0.4 };
+  const sampling = { temperature: 0.4, maxTokens: 32000 };
   try {
     if (isTauriDesktop) {
       const full = await invoke('generate_calabi_yau_response', {
@@ -1030,8 +1045,7 @@ window.addEventListener('load',function(){setTimeout(function(){var b=document.b
 }
 
 function canUseLiveModel() {
-  const provider = getActiveProvider();
-  const apiKey = dom.apiKeyInput.value.trim() || loadProviderConfig(provider.id).apiKey || '';
+  const { provider, apiKey } = harnessTarget();
   return Boolean(apiKey) || provider.id === 'ollama-local' || /localhost|127\.0\.0\.1/.test(provider.defaultEndpoint || '') || isTauriDesktop;
 }
 
@@ -1049,7 +1063,7 @@ async function runHarnessForPrompt(effectivePrompt, templateOverride, previousBu
     if (live) stages.push(live);
     onStages(stages);
   };
-  const modelName = `${getActiveProvider().badge} // ${getSelectedModelSlug()}`;
+  const modelName = `${harnessTarget().provider.badge} // ${harnessTarget().model}`;
 
   const runtimeCheck = async (files) => {
     const entry = files.find((f) => f.path === intent.template.entryFile) || files.find((f) => /\.html?$/i.test(f.path));
@@ -1093,6 +1107,7 @@ async function runHarnessForPrompt(effectivePrompt, templateOverride, previousBu
     onProgress({ phase, attempt, problems }) {
       if (phase === 'generate') setLive('Generating project', `${modelName} writing every file for "${effectivePrompt}"`);
       else if (phase === 'runtime') setLive('Running checks', 'Loading the app in a headless preview and running its tests');
+      else if (phase === 'continue') setLive(`Continuing output (${attempt})`, `${modelName} hit its length limit; asking it to continue where it stopped`);
       else if (phase === 'repair') setLive(`Repair pass ${attempt}`, `Sending ${problems.length} problem(s) back to ${modelName}`);
       else if (phase === 'checked') {
         setLive(null);
@@ -1140,7 +1155,7 @@ async function executeAutonomousBuildFromPrompt(promptText, templateOverride = '
           id: 'llm-error',
           label: 'Model call failed',
           status: 'FAIL',
-          detail: `${getActiveProvider().badge} // ${getSelectedModelSlug()}: ${err?.message || err}. Set the API key / endpoint, then rebuild. Showing offline template instead.`,
+          detail: `${harnessTarget().provider.badge} // ${harnessTarget().model}: ${err?.message || err}. Set the API key / endpoint, then rebuild. Showing offline template instead.`,
           timestampMs: Date.now(),
         },
       ];
@@ -1751,7 +1766,7 @@ function createChatBubble(role, initialText = '', badgeText = '', lane = null) {
 function handleStreamToken(runId, { token, thinking = false, tMs }) {
   const collector = buildCollectors.get(runId);
   if (collector) {
-    if (token && !thinking) collector.onToken(token);
+    if (token) collector.onToken(token, thinking);
     return;
   }
   const session = laneSessions.get(runId);
@@ -1819,6 +1834,7 @@ function buildBrowserPayload(provider, modelSlug, prompt, sampling, systemPrompt
   if (provider.id === 'google') {
     const generationConfig = { temperature };
     if (sampling?.topP != null) generationConfig.topP = sampling.topP;
+    if (sampling?.maxTokens) generationConfig.maxOutputTokens = sampling.maxTokens;
     const body = { contents: [{ role: 'user', parts: [{ text: prompt }] }], generationConfig };
     if (systemPrompt) {
       body.systemInstruction = { parts: [{ text: systemPrompt }] };
@@ -1826,7 +1842,7 @@ function buildBrowserPayload(provider, modelSlug, prompt, sampling, systemPrompt
     return body;
   }
   if (provider.id === 'anthropic') {
-    const body = { model: modelSlug, max_tokens: 4096, stream: true, messages: [{ role: 'user', content: prompt }] };
+    const body = { model: modelSlug, max_tokens: sampling?.maxTokens || 4096, stream: true, messages: [{ role: 'user', content: prompt }] };
     if (systemPrompt) body.system = systemPrompt;
     if (sampling?.temperature != null) body.temperature = Math.min(1, sampling.temperature);
     return body;
@@ -1837,6 +1853,10 @@ function buildBrowserPayload(provider, modelSlug, prompt, sampling, systemPrompt
   if (provider.id === 'ollama-cloud' || provider.id === 'ollama-local') {
     const options = { temperature, top_p: sampling?.topP ?? 0.9 };
     if (penalty > 0) options.repeat_penalty = 1 + penalty * 0.5;
+    if (sampling?.maxTokens) {
+      Object.assign(options, { num_ctx: 32768, num_predict: sampling.maxTokens });
+      return { model: modelSlug, messages, stream: true, think: false, options };
+    }
     return { model: modelSlug, messages, stream: true, options };
   }
   const body = { model: modelSlug, messages, stream: true, temperature };
@@ -2099,6 +2119,39 @@ async function runLane(lane, prompt, forceSimulation, sampling) {
   };
 
   let runId = beginRun(forceSimulation);
+
+  if (!forceSimulation && isApplicationBuildPrompt(prompt) && !lane.multi) {
+    bubble.content.textContent = `Building "${prompt}" with ${provider.badge} // ${lane.model}. The model writes every file, then the harness checks, runs and repairs it. Live progress is in the App Builder.`;
+    openBuildLauncher();
+    harnessLane = {
+      provider,
+      model: lane.model,
+      apiKey: lane.apiKey || loadProviderConfig(provider.id).apiKey || '',
+      endpoint: lane.endpoint || loadProviderConfig(provider.id).endpoint || '',
+      instrumentRunId: runId,
+    };
+    try {
+      const project = await executeAutonomousBuildFromPrompt(prompt);
+      const failed = project.stages?.find((s) => s.status === 'FAIL');
+      const summary = document.createElement('div');
+      summary.style.marginTop = '8px';
+      summary.textContent = failed
+        ? `${failed.label}: ${failed.detail}`
+        : `${project.authoredByLlm ? 'Built and verified' : 'Offline template only'}: ${project.title}, ${project.files.length} files in ${project.directory}\n${project.files.map((f) => `• ${f.path}`).join('\n')}\nUse LAUNCH APP ▶ in the App Builder to run it.`;
+      summary.style.whiteSpace = 'pre-wrap';
+      bubble.content.appendChild(summary);
+    } catch (err) {
+      bubble.content.textContent += `\n[BUILD FAILED] ${err?.message || err}`;
+    } finally {
+      harnessLane = null;
+      bubble.content.classList.remove('streaming-cursor');
+      const fp = instrumentConsole.finishRun(runId);
+      if (fp) bubble.metricSpan.textContent = `${fp.tokens} tok · ${fp.stats.tokensPerSec.toFixed(1)}/s · BUILD`;
+      laneSessions.delete(runId);
+    }
+    return;
+  }
+
   const systemPrompt = isApplicationBuildPrompt(prompt)
     ? buildMultiFileSystemPrompt(
         analyzeBuildIntent(
