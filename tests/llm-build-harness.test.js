@@ -138,6 +138,26 @@ describe('LLM build harness', () => {
     assert.match(calls[3], /h1 id="t"/);
   });
 
+  it('stops rambling streams early and learns the per-model strategy', async () => {
+    let firstGuard = null;
+    const learned = [];
+    await runLlmBuildHarness({
+      prompt: 'seasons',
+      intent: analyzeBuildIntent('seasons'),
+      maxRepairs: 0,
+      onStrategyLearned: (m) => learned.push(m),
+      complete: async (_s, user, hooks) => {
+        if (!firstGuard) firstGuard = hooks.shouldStop;
+        if (/PLANNING STEP/.test(user)) return '<manifest>["index.html"]</manifest><spec>x</spec>';
+        if (/write ONLY index\.html/.test(user)) return '<file path="index.html">\n<!DOCTYPE html><html><body>Seasons of the year</body></html>\n</file>';
+        return 'thinking '.repeat(1000);
+      },
+    });
+    assert.equal(firstGuard('x'.repeat(9000)), true);
+    assert.equal(firstGuard('<file path="a.js">' + 'x'.repeat(9000)), false);
+    assert.deepEqual(learned, ['per-file']);
+  });
+
   it('routes misspelled Electron requests to the Electron template', () => {
     assert.equal(selectTemplateForPrompt('build an ollama cloud electrojn app with glm 5.3').id, 'electron-desktop');
   });

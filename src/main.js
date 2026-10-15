@@ -970,17 +970,24 @@ function harnessTarget() {
   };
 }
 
-async function completeWithActiveModel(system, user, onToken = () => {}) {
+async function completeWithActiveModel(system, user, onToken = () => {}, { shouldStop } = {}) {
   const { provider, model, apiKey, endpoint, instrumentRunId } = harnessTarget();
   const runId = `build-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
   let text = '';
+  let stopped = false;
   const t0 = performance.now();
+  const controller = new AbortController();
   buildCollectors.set(runId, {
     onToken(tok, thinking) {
       if (instrumentRunId) instrumentConsole.pushToken(instrumentRunId, { token: tok, thinking, tMs: performance.now() - t0 });
-      if (thinking) return;
+      if (thinking || stopped) return;
       text += tok;
       onToken(text.length);
+      if (shouldStop && shouldStop(text)) {
+        stopped = true;
+        if (isTauriDesktop) invoke('cancel_generation', { runId }).catch(() => {});
+        else controller.abort();
+      }
     },
   });
   const sampling = { temperature: 0.4, maxTokens: 32000 };
@@ -996,10 +1003,13 @@ async function completeWithActiveModel(system, user, onToken = () => {}) {
         sampling,
         systemPrompt: system,
       });
-      return typeof full === 'string' && full.length >= text.length ? full : text;
+      return !stopped && typeof full === 'string' && full.length >= text.length ? full : text;
     }
-    await runBrowserStream(runId, user, provider, { model, apiKey, endpoint }, sampling, null, system);
+    await runBrowserStream(runId, user, provider, { model, apiKey, endpoint, signal: controller.signal }, sampling, null, system);
     return text;
+  } catch (err) {
+    if (stopped) return text;
+    throw err;
   } finally {
     buildCollectors.delete(runId);
   }
@@ -1044,6 +1054,25 @@ window.addEventListener('load',function(){setTimeout(function(){var b=document.b
   });
 }
 
+const MODEL_STRATEGY_KEY = 'calabi_model_build_strategy_v1';
+
+/** Remembers which models need plan-then-write so later builds skip the wasted one-shot attempt. */
+function loadModelStrategies() {
+  try {
+    return JSON.parse(localStorage.getItem(MODEL_STRATEGY_KEY) || '{}');
+  } catch {
+    return {};
+  }
+}
+
+function saveModelStrategy(key, mode) {
+  try {
+    localStorage.setItem(MODEL_STRATEGY_KEY, JSON.stringify({ ...loadModelStrategies(), [key]: mode }));
+  } catch {
+    // Storage full: the harness re-detects next time.
+  }
+}
+
 function canUseLiveModel() {
   const { provider, apiKey } = harnessTarget();
   return Boolean(apiKey) || provider.id === 'ollama-local' || /localhost|127\.0\.0\.1/.test(provider.defaultEndpoint || '') || isTauriDesktop;
@@ -1064,6 +1093,7 @@ async function runHarnessForPrompt(effectivePrompt, templateOverride, previousBu
     onStages(stages);
   };
   const modelName = `${harnessTarget().provider.badge} // ${harnessTarget().model}`;
+  const modelKey = `${harnessTarget().provider.id}/${harnessTarget().model}`;
 
   const runtimeCheck = async (files) => {
     const entry = files.find((f) => f.path === intent.template.entryFile) || files.find((f) => /\.html?$/i.test(f.path));
@@ -1095,15 +1125,22 @@ async function runHarnessForPrompt(effectivePrompt, templateOverride, previousBu
   const result = await runLlmBuildHarness({
     prompt: effectivePrompt,
     intent,
-    complete: (system, user) =>
-      completeWithActiveModel(system, user, (chars) => {
-        if (live) {
-          live.detail = `${modelName} streaming… ${chars.toLocaleString()} chars`;
-          onStages(stages);
-        }
-      }),
+    complete: (system, user, hooks) =>
+      completeWithActiveModel(
+        system,
+        user,
+        (chars) => {
+          if (live) {
+            live.detail = `${modelName} streaming… ${chars.toLocaleString()} chars`;
+            onStages(stages);
+          }
+        },
+        hooks
+      ),
     runtimeCheck,
     maxRepairs: 3,
+    strategy: loadModelStrategies()[modelKey] === 'per-file' ? 'per-file' : 'auto',
+    onStrategyLearned: (mode) => saveModelStrategy(modelKey, mode),
     onProgress({ phase, attempt, problems, path: filePath }) {
       if (phase === 'generate') setLive('Generating project', `${modelName} writing every file for "${effectivePrompt}"`);
       else if (phase === 'runtime') setLive('Running checks', 'Loading the app in a headless preview and running its tests');
@@ -1895,6 +1932,7 @@ async function runBrowserStream(runId, prompt, provider, lane, sampling, session
     method: 'POST',
     headers,
     body: JSON.stringify(buildBrowserPayload(provider, lane.model, prompt, sampling, systemPrompt)),
+    signal: lane.signal,
   });
   if (!response.ok || !response.body) {
     throw new Error(`HTTP ${response.status} from ${provider.badge}`);

@@ -1054,6 +1054,28 @@ async fn generate_calabi_yau_response(
     result.map(|(text, _)| text)
 }
 
+static CANCELLED_RUNS: std::sync::Mutex<Vec<String>> = std::sync::Mutex::new(Vec::new());
+
+fn take_cancellation(run_id: &str) -> bool {
+    let mut runs = CANCELLED_RUNS.lock().unwrap_or_else(|e| e.into_inner());
+    match runs.iter().position(|r| r == run_id) {
+        Some(i) => {
+            runs.swap_remove(i);
+            true
+        }
+        None => false,
+    }
+}
+
+/// Stops an in-flight `generate_calabi_yau_response`; it resolves with the text streamed so far.
+#[tauri::command]
+fn cancel_generation(run_id: String) {
+    let mut runs = CANCELLED_RUNS.lock().unwrap_or_else(|e| e.into_inner());
+    if !runs.contains(&run_id) {
+        runs.push(run_id);
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 async fn stream_completion(
     window: &Window,
@@ -1149,6 +1171,9 @@ async fn stream_completion(
     let mut index: u64 = 0;
 
     loop {
+        if take_cancellation(run_id) {
+            return Ok((full_output, index));
+        }
         let chunk = byte_stream.next().await;
         let at_end = chunk.is_none();
         if let Some(chunk_result) = chunk {
@@ -1200,7 +1225,8 @@ fn main() {
             write_pc_file,
             execute_guarded_command,
             launch_build_project,
-            read_launch_log
+            read_launch_log,
+            cancel_generation
         ])
         .run(tauri::generate_context!())
         .expect("error while running Calabi-Yau AI Platform Tauri application");

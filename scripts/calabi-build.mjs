@@ -49,7 +49,7 @@ async function* readLines(response) {
 }
 
 function makeCompleter(opts) {
-  return async (system, user) => {
+  return async (system, user, { shouldStop } = {}) => {
     const p = opts.provider;
     let url;
     let headers = { 'Content-Type': 'application/json' };
@@ -85,10 +85,12 @@ function makeCompleter(opts) {
       };
     }
 
-    const res = await fetch(url, { method: 'POST', headers, body: JSON.stringify(body) });
+    const controller = new AbortController();
+    const res = await fetch(url, { method: 'POST', headers, body: JSON.stringify(body), signal: controller.signal });
     if (!res.ok) throw new Error(`HTTP ${res.status} from ${url}: ${(await res.text()).slice(0, 400)}`);
     let text = '';
     let lastReport = 0;
+    try {
     for await (const raw of readLines(res)) {
       const line = raw.startsWith('data:') ? raw.slice(5).trim() : raw;
       if (!line || line === '[DONE]' || raw.startsWith('event:')) continue;
@@ -104,6 +106,14 @@ function makeCompleter(opts) {
         lastReport = text.length;
         process.stdout.write(`\r    streaming… ${text.length.toLocaleString()} chars`);
       }
+      if (shouldStop && shouldStop(text)) {
+        process.stdout.write(`\r    stopped early at ${text.length.toLocaleString()} chars (model was planning instead of writing files)\n`);
+        controller.abort();
+        return text;
+      }
+    }
+    } catch (err) {
+      if (err.name !== 'AbortError') throw err;
     }
     process.stdout.write(`\r    received ${text.length.toLocaleString()} chars\n`);
     return text;
@@ -157,6 +167,24 @@ function writeProject(dir, files) {
   }
 }
 
+const STRATEGY_FILE = path.join(os.homedir(), '.calabi', 'model-strategies.json');
+
+function loadStrategies() {
+  try {
+    return JSON.parse(fs.readFileSync(STRATEGY_FILE, 'utf8'));
+  } catch {
+    return {};
+  }
+}
+
+function saveStrategy(key, mode) {
+  const all = loadStrategies();
+  if (all[key] === mode) return;
+  all[key] = mode;
+  fs.mkdirSync(path.dirname(STRATEGY_FILE), { recursive: true });
+  fs.writeFileSync(STRATEGY_FILE, JSON.stringify(all, null, 2));
+}
+
 async function main() {
   const opts = parseArgs(process.argv.slice(2));
   if (!opts.prompt) {
@@ -185,6 +213,7 @@ async function main() {
     return problems;
   };
 
+  const modelKey = `${opts.provider}/${opts.model}`;
   const started = Date.now();
   const result = await runLlmBuildHarness({
     prompt: opts.prompt,
@@ -192,6 +221,8 @@ async function main() {
     complete: makeCompleter(opts),
     runtimeCheck,
     maxRepairs: opts.repairs,
+    strategy: opts.strategy || (loadStrategies()[modelKey] === 'per-file' ? 'per-file' : 'auto'),
+    onStrategyLearned: (mode) => saveStrategy(modelKey, mode),
     onProgress({ phase, attempt, problems, path: filePath }) {
       if (phase === 'generate') console.log('• generating project');
       if (phase === 'runtime') console.log('• running browser + test checks');

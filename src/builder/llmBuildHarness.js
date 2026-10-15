@@ -299,8 +299,19 @@ export function buildContinuationPrompt(prompt, rawText) {
 }
 
 /** Calls the model, then keeps asking it to continue while the output looks truncated. */
-async function completeWithContinuation(complete, system, user, prompt, entryFile, onProgress, maxContinuations = 3) {
-  let text = await complete(system, user);
+/**
+ * Stream guard handed to `complete(system, user, { shouldStop })`. Transports that can cancel
+ * a stream stop it once the model has rambled `limit` characters without opening a <file>.
+ */
+export function proseGuard(limit) {
+  return (textSoFar) => textSoFar.length > limit && !/<file\s+path\s*=/.test(textSoFar);
+}
+
+export const ONE_SHOT_PROSE_LIMIT = 8000;
+export const PER_FILE_PROSE_LIMIT = 24000;
+
+async function completeWithContinuation(complete, system, user, prompt, entryFile, onProgress, maxContinuations = 3, proseLimit = PER_FILE_PROSE_LIMIT) {
+  let text = await complete(system, user, { shouldStop: proseGuard(proseLimit) });
   for (let i = 1; i <= maxContinuations && /<file\s+path\s*=/.test(text) && looksTruncated(text, entryFile); i++) {
     onProgress({ phase: 'continue', attempt: i });
     const more = await complete(system, buildContinuationPrompt(prompt, text));
@@ -321,6 +332,7 @@ export async function runLlmBuildHarness({
   runtimeCheck = null,
   maxRepairs = 3,
   strategy = 'auto',
+  onStrategyLearned = null,
   onProgress = () => {},
 }) {
   const system = buildHarnessSystemPrompt(intent);
@@ -332,13 +344,16 @@ export async function runLlmBuildHarness({
   let mode = strategy;
   if (mode !== 'per-file') {
     onProgress({ phase: 'generate', attempt: 0 });
-    const firstText = await completeWithContinuation(complete, system, buildHarnessUserPrompt(prompt, intent), prompt, entryFile, onProgress);
+    const firstText = await completeWithContinuation(complete, system, buildHarnessUserPrompt(prompt, intent), prompt, entryFile, onProgress, 3, ONE_SHOT_PROSE_LIMIT);
     files = parseHarnessFiles(firstText, entryFile);
     const first = staticCheckProject(files, checkOpts);
     const unusable = files.length === 0 || first.some((p) => /truncated|No files were produced/.test(p)) || looksTruncated(firstText, entryFile);
     if (mode === 'auto' && unusable) {
       onProgress({ phase: 'fallback', attempt: 0, problems: first });
       mode = 'per-file';
+      if (typeof onStrategyLearned === 'function') onStrategyLearned('per-file');
+    } else if (mode === 'auto' && typeof onStrategyLearned === 'function') {
+      onStrategyLearned('one-shot');
     }
   }
   if (mode === 'per-file') {
@@ -355,7 +370,7 @@ export async function runLlmBuildHarness({
     onProgress({ phase: 'checked', attempt, problems });
 
     if (problems.length === 0 || attempt >= maxRepairs) {
-      return { files, problems, attempts, passed: problems.length === 0 };
+      return { files, problems, attempts, passed: problems.length === 0, strategy: mode };
     }
 
     onProgress({ phase: 'repair', attempt: attempt + 1, problems });
@@ -479,7 +494,7 @@ const DEFAULT_MANIFEST = {
 /** Plan-then-write: one manifest call, then one focused call per file. */
 async function generatePerFile({ complete, system, prompt, intent, entryFile, onProgress, seed = [] }) {
   onProgress({ phase: 'plan', attempt: 0 });
-  const manifest = parseManifest(await complete(system, buildManifestPrompt(prompt, intent)));
+  const manifest = parseManifest(await complete(system, buildManifestPrompt(prompt, intent), { shouldStop: (t) => /<\/spec>/i.test(t) || t.length > PER_FILE_PROSE_LIMIT }));
   if (manifest.paths.length === 0) {
     manifest.paths = DEFAULT_MANIFEST[intent?.templateId] || [entryFile, 'styles.css', 'app.js', 'package.json', 'test.mjs'];
   }
