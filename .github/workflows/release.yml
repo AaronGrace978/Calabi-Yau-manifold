@@ -7,9 +7,9 @@ on:
   workflow_dispatch:
     inputs:
       tag_name:
-        description: 'Release tag version (e.g. v0.6.2)'
+        description: 'Release tag version (e.g. v0.7.0)'
         required: false
-        default: 'v0.6.2'
+        default: 'v0.7.0'
 
 permissions:
   contents: write
@@ -48,7 +48,7 @@ jobs:
           elif [[ -n "${{ inputs.tag_name }}" ]]; then
             echo "tag=${{ inputs.tag_name }}" >> "$GITHUB_OUTPUT"
           else
-            echo "tag=v0.6.2" >> "$GITHUB_OUTPUT"
+            echo "tag=v0.7.0" >> "$GITHUB_OUTPUT"
           fi
 
       - name: Install Linux system dependencies (GTK3 / WebKit2GTK / AppIndicator)
@@ -82,13 +82,13 @@ jobs:
       - name: Install frontend dependencies
         run: npm ci
 
-      - name: Run spectral instrument unit tests
+      - name: Run geometry unit tests
         run: npm test
 
       - name: Verify frontend production bundle
         run: npm run build
 
-      - name: Run Rust stream protocol unit tests
+      - name: Run Rust unit tests
         if: matrix.platform == 'ubuntu-22.04'
         run: cargo test --manifest-path src-tauri/Cargo.toml
 
@@ -98,46 +98,22 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           tagName: ${{ steps.meta.outputs.tag }}
-          releaseName: "Calabi-Yau AI Platform ${{ steps.meta.outputs.tag }}"
+          releaseName: "Calabi-Yau Lab ${{ steps.meta.outputs.tag }}"
           releaseBody: |
-            ## Calabi-Yau AI Platform ${{ steps.meta.outputs.tag }}: Autonomous Application Builder, Guarded PC Harness & 2D–11D Scientific Instrument
+            ## Calabi-Yau Lab ${{ steps.meta.outputs.tag }}
 
-            ### 1. Autonomous Multi-File Application Builder (`~/CalabiYauProjects/builds/<slug>/`)
-            - **7 Full-Stack & Desktop Project Templates**:
-              - **Electron Desktop App (`electron-desktop`)**: Scaffolds `package.json`, `main.cjs` (`BrowserWindow` + `ipcMain.handle`), `preload.cjs` (`contextBridge`), `renderer.js`, `index.html`, and `test.mjs`.
-              - **Tauri + Rust Native Desktop App (`tauri-rust-app`)**: Scaffolds `Cargo.toml`, `src-tauri/src/main.rs`, `src/index.html`, and `verify-tauri.mjs`.
-              - **Modern Web Application Suite (`react-vite-app`)**: Modular ES modules, reactive domain engine (`src/engine.js`), interactive UI (`index.html`), and automated Node tests (`test.mjs`).
-              - **Full-Stack Node.js HTTP REST API (`fullstack-node-api`)**: Zero-dependency HTTP REST server (`server.mjs`), interactive client (`public/index.html`), and endpoint test suite (`test-api.mjs`).
-              - **Python Scientific Computing & CLI Lab (`python-science-cli`)**: `app.py` with `--self-test` verification and interactive telemetry workbench.
-              - **4D–11D Higher-Dimensional Science Lab (`dimensional-lab`)**: Interactive polychoron, hyperplane slicer, and SO(4) isometry verifier (`verify-geometry.mjs`).
-              - **WebGL / GLSL GPU Shader Studio (`webgl-shader-app`)**: Custom fragment shaders (`shader.frag`), uniform controls, and shader verifier (`verify-shader.mjs`).
-            - **Novelty & Anti-Duplication Engine**: Fixes repetitive builds by analyzing prompt intent, domain entities, and FNV-1a fingerprints against prior builds so requesting any new application `X` always synthesizes a fresh, prompt-specific multi-file project.
-            - **5-Stage Self-Healing Build Loop**: Intent & Novelty Check → Template Scaffold → Structural Self-Heal → Guarded Disk Write (`~/CalabiYauProjects/builds/<slug>`) → Toolchain Verification.
-            - **Guarded PC Access (`src-tauri/src/guardrails.rs`)**: Enforces `WorkspaceGuarded`, `StrictSandbox`, and `DryRun` policies, blocking path traversal, system directories, credentials (`.ssh`, `.aws`, `.gnupg`), and destructive shell operators while allowing verified developer toolchains (`node`, `npm`, `npx`, `cargo`, `rustc`, `python3`, `git`).
+            See what higher dimensions look like. The app builder, command runner and token instrument are gone; the app is now a geometry lab.
 
-            ### 2. Higher-Dimensional Science & Topology Engine (2D → 11D)
-            - **11 Exact Scientific Spaces**: 4D Tesseract `{4,3,3}`, 4D Self-Dual 24-Cell `{3,4,3}`, 4D Hopf Fibration `S¹ ↪ S³ → S²`, 4D Flat Clifford Torus, 4D Non-Orientable Klein Bottle in `ℝ⁴`, 5D Kaluza-Klein Cylinder `M⁴ × S¹`, 6D Calabi-Yau Quintic `M₅ ⊂ ℂℙ⁴`, 7D Joyce `G₂`-Holonomy Manifold, 8D Exceptional `E₈` Root Lattice (all 240 roots projected via Coxeter eigenplanes), 10D Mirror Superstring Target Space (`χ = +200`), and 11D Hořava-Witten M-Theory Orbifold.
-            - **Real-Time 4D Hyperplane Cross-Section Slicing (`w₄ = c`) & SO(4) Rotations**: Interactive GLSL + CPU hyperplane slicer, stereographic projections, exact Euler characteristic `χ`, Betti numbers `b_k`, Hodge diamond `h^{p,q}`, numerical Riemannian metric tensor `g_ij`, Kähler potential `K`, Grassberger-Procaccia Correlation Dimension `D₂`, and maximal Lyapunov exponent `λ_max`.
+            - **Dimension ladder, 2D to 11D**: hypercube, simplex and cross-polytope, with counted faces checked against the f-vector.
+            - **4D regular polytopes**: 24-cell and 600-cell with exact cross-sections.
+            - **Surfaces in 4D**: Clifford torus, Hopf fibration (linked circles), Klein bottle without self-intersection.
+            - **Calabi-Yau**: the Fermat curve picture of a Calabi-Yau slice, degree 2 to 7.
+            - **E8**: all 240 roots in the computed Coxeter-plane (Petrie) projection.
+            - **Compact extra dimension**: the Kaluza-Klein garden hose.
+            - 4D rotation sliders, spin through every hidden axis, perspective / orthographic / stereographic projection, exact slicing, PNG snapshots.
+            - **Ask about this**: stream an explanation of the object on screen from any configured provider.
 
-            ### Supported Providers & 2026 Frontier Models
-            - **Ollama Cloud (`ollama.com`)**: `deepseek-v4.1-flash`, `deepseek-v4-pro:0813`, `mistral-large-4`, `kimi-k3`, `kimi-k2.7-code`, `glm-5.3`, `glm-5.3-flash`, `qwen3.5:397b`, `gemma4:31b`, `minimax-m3`, `nemotron-3-ultra`, `gpt-oss:120b` + live `/api/tags` sync
-            - **Anthropic**: `claude-opus-5-5`, `claude-sonnet-5-5`, `claude-haiku-5-5`, `claude-fable-5-1`, `claude-opus-5`
-            - **OpenAI**: `gpt-6-astra`, `gpt-6.1-sol`, `gpt-6-sol`, `gpt-6-luna`, `gpt-5.6-sol`, `gpt-5.6-terra`, `gpt-5.5-pro`, `gpt-5.3-codex`
-            - **Google DeepMind**: `gemini-4-argon`, `gemini-3.8-flash`, `gemini-3.7-flash`, `gemini-3.5-flash`, `gemini-3.1-pro`
-            - **xAI**: `grok-4.7`, `grok-4.6`, `grok-4.5`, `grok-4.3-beta`
-            - **DeepSeek**: `deepseek-v4.1-flash`, `deepseek-v4-pro-0813`, `deepseek-v4-pro`, `deepseek-reasoner`
-            - **Meta AI**: `muse-wonder-full`, `muse-wonder-1.0`, `muse-spark-1.3`, `llama-4-maverick-17b-128e`
-            - **Mistral AI**: `mistral-large-4`, `mistral-large-3-675b`, `devstral-2-123b`
-            - **Alibaba Qwen**: `qwen-3.8-max`, `qwen-3.8-27b`, `qwen-3.7-max`
-            - **Moonshot Kimi**: `kimi-k3`, `kimi-k2.7-code`, `kimi-k2.6`
-            - **Z.ai / Zhipu**: `glm-5.3`, `glm-5.3-flash`, `glm-5.2`
-            - **OpenRouter, Groq LPU, Together AI, Fireworks AI, Perplexity Sonar, Cerebras, NVIDIA NIM, & Ollama Local**
-
-            ### Platform Installers & Bundles
-            - **macOS (Apple Silicon M1/M2/M3/M4)**: `.dmg` & `.app.tar.gz` (`aarch64-apple-darwin`)
-            - **macOS (Intel x86_64)**: `.dmg` & `.app.tar.gz` (`x86_64-apple-darwin`)
-            - **Linux (x86_64)**: `.AppImage` & `.deb` (`ubuntu-22.04`)
-            - **Windows (x86_64)**: `.msi` & `.exe` NSIS installer (`x86_64-pc-windows-msvc`)
+            Installers: Windows (`.msi`, `.exe`), macOS Apple Silicon and Intel (`.dmg`), Linux (`.AppImage`, `.deb`).
           releaseDraft: false
           prerelease: false
           args: ${{ matrix.args }}
