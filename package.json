@@ -1,7 +1,7 @@
 {
   "name": "calabi-yau-ai-platform",
   "private": true,
-  "version": "0.6.1",
+  "version": "0.6.2",
   "description": "Calabi-Yau AI Platform: Autonomous Multi-File Application Builder, Guarded PC Harness & 2D–11D Higher-Dimensional Scientific Instrument",
   "type": "module",
   "scripts": {

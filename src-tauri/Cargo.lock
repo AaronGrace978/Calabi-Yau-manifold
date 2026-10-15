@@ -224,7 +224,7 @@ dependencies = [
 
 [[package]]
 name = "calabi-yau-ai-platform"
-version = "0.6.1"
+version = "0.6.2"
 dependencies = [
  "futures-util",
  "reqwest",
