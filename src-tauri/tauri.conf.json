@@ -7,8 +7,8 @@
     "distDir": "../dist"
   },
   "package": {
-    "productName": "Calabi-Yau AI Platform",
-    "version": "0.6.2"
+    "productName": "Calabi-Yau Lab",
+    "version": "0.7.0"
   },
   "tauri": {
     "allowlist": {
@@ -48,7 +48,7 @@
         "minHeight": 680,
         "minWidth": 1024,
         "resizable": true,
-        "title": "Calabi-Yau AI Platform",
+        "title": "Calabi-Yau Lab",
         "decorations": false,
         "transparent": true,
         "center": true

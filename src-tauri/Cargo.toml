@@ -1,8 +1,8 @@
 [package]
-name = "calabi-yau-ai-platform"
-version = "0.6.2"
-description = "Calabi-Yau AI Platform: Autonomous Multi-File Application Builder, Guarded PC Harness & 2D–11D Higher-Dimensional Scientific Instrument"
-authors = ["Principal Architecture Team"]
+name = "calabi-yau-lab"
+version = "0.7.0"
+description = "Calabi-Yau Lab: see what higher dimensions look like"
+authors = ["Aaron Grace"]
 license = "MIT"
 repository = ""
 edition = "2021"
@@ -17,6 +17,7 @@ serde_json = "1.0"
 tokio = { version = "1.37", features = ["full"] }
 reqwest = { version = "0.12", default-features = false, features = ["json", "stream", "rustls-tls"] }
 futures-util = "0.3"
+base64 = "0.22"
 
 [features]
 custom-protocol = ["tauri/custom-protocol"]

@@ -223,9 +223,10 @@ dependencies = [
 ]
 
 [[package]]
-name = "calabi-yau-ai-platform"
-version = "0.6.2"
+name = "calabi-yau-lab"
+version = "0.7.0"
 dependencies = [
+ "base64 0.22.1",
  "futures-util",
  "reqwest",
  "serde",

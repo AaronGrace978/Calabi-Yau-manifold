@@ -158,7 +158,8 @@ fn finite(v: Option<f64>) -> Option<f64> {
     v.filter(|x| x.is_finite())
 }
 
-/// Builds the provider-specific JSON body, applying control-surface sampling parameters.
+/// Builds the provider-specific JSON body, applying sampling parameters.
+#[cfg(test)]
 pub fn build_payload(
     provider_id: &str,
     model: &str,

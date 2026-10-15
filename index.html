@@ -3,513 +3,108 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Calabi-Yau AI Platform</title>
+    <title>Calabi-Yau Lab</title>
     <link rel="stylesheet" href="/src/style.css" />
   </head>
   <body>
-    <div id="app-shell">
-      <!-- Borderless Tauri Window Titlebar -->
-      <header class="cyber-titlebar" data-tauri-drag-region>
-        <div class="titlebar-brand" data-tauri-drag-region>
-          <span class="quantum-beacon" id="status-beacon"></span>
-          <span class="brand-glyph">CY//6D</span>
-          <span class="brand-name" data-tauri-drag-region>CALABI-YAU AI PLATFORM</span>
-          <span class="brand-tag" id="active-provider-banner">OLLAMA CLOUD // MULTI-PROVIDER NEXUS</span>
+    <div id="app">
+      <header class="titlebar" data-tauri-drag-region>
+        <div class="brand" data-tauri-drag-region>
+          <span class="brand-mark">CY</span>
+          <span class="brand-name" data-tauri-drag-region>CALABI-YAU LAB</span>
+          <span class="brand-tag" data-tauri-drag-region>see what higher dimensions look like</span>
         </div>
-
         <div class="titlebar-actions">
-          <button id="btn-toggle-config" class="hud-chip-btn" title="Configure API Key &amp; Custom Endpoint">
-            API KEY // ENDPOINT
-          </button>
-          <button id="btn-sync-models" class="hud-chip-btn" title="Fetch Live Models from Active Provider">
-            SYNC MODELS
-          </button>
-          <button id="btn-build-launcher" class="hud-chip-btn launcher-btn" title="Open Live WebGL Build Launcher &amp; Machine Project Harness">
-            BUILD LAUNCHER // PROJECTS
-          </button>
-          <button id="btn-witness-dossier" class="hud-chip-btn emerald" title="Open Interactive Frontier Mathematical Witness &amp; Cryptographic Proof Dossier">
-            WITNESS DOSSIER
-          </button>
-          <button id="btn-toggle-layout" class="hud-chip-btn" title="Toggle Fullscreen Manifold / Split View">
-            SPLIT // HUD
-          </button>
-          <button id="btn-pulse-test" class="hud-chip-btn accent" title="Inject Quantum String Impulse">
-            PULSE TEST
-          </button>
-          <div class="window-controls">
-            <button id="win-minimize" class="win-btn" aria-label="Minimize">&#8211;</button>
-            <button id="win-maximize" class="win-btn" aria-label="Maximize">&#9633;</button>
-            <button id="win-close" class="win-btn close" aria-label="Close">&#10005;</button>
+          <button id="btn-snapshot" class="chip" type="button" title="Save a PNG of the current view">SNAPSHOT</button>
+          <button id="btn-toggle-notes" class="chip" type="button" title="Show or hide the field notes">NOTES</button>
+          <div id="window-controls" class="window-controls hidden">
+            <button id="win-min" class="win-btn" type="button" aria-label="Minimize">&#8211;</button>
+            <button id="win-max" class="win-btn" type="button" aria-label="Maximize">&#9633;</button>
+            <button id="win-close" class="win-btn close" type="button" aria-label="Close">&#10005;</button>
           </div>
         </div>
       </header>
 
-      <!-- Main Workspace: Heterogeneous WebGL Viewport + Cyberpunk Streaming Console -->
-      <main id="workspace-grid" class="workspace-grid">
-        <!-- Left / Full-Bleed WebGL Viewport -->
-        <section class="viewport-stage">
-          <div id="calabi-yau-viewport" class="webgl-canvas-container"></div>
+      <main class="layout">
+        <nav id="space-list" class="space-list" aria-label="Spaces"></nav>
 
-          <!-- Top-Left Quantum Telemetry Overlay -->
-          <aside class="telemetry-hud">
-            <div class="hud-header">
-              <span class="hud-kicker">HIGHER-DIMENSIONAL TELEMETRY</span>
-              <span id="hud-runtime-mode" class="hud-badge">TAURI // IPC</span>
+        <section class="stage">
+          <div id="viewport" class="viewport"></div>
+
+          <div class="stage-badge">
+            <span id="space-badge">—</span>
+            <span id="slice-readout" class="muted"></span>
+          </div>
+          <div id="toast" class="toast hidden"></div>
+
+          <div class="dock">
+            <div id="param-controls" class="dock-group"></div>
+
+            <div id="rotation-controls" class="dock-group">
+              <div class="dock-title">4D ROTATION</div>
+              <label class="ctl"><span>x ↔ w <em id="val-xw">0.00</em></span><input id="rot-xw" type="range" min="-3.1416" max="3.1416" step="0.01" value="0" /></label>
+              <label class="ctl"><span>y ↔ w <em id="val-yw">0.00</em></span><input id="rot-yw" type="range" min="-3.1416" max="3.1416" step="0.01" value="0" /></label>
+              <label class="ctl"><span>z ↔ w <em id="val-zw">0.00</em></span><input id="rot-zw" type="range" min="-3.1416" max="3.1416" step="0.01" value="0" /></label>
             </div>
 
-            <div class="metric-grid">
-              <div class="metric-card">
-                <span class="metric-label">INFORMATION RATE (I)</span>
-                <div class="metric-value-row">
-                  <span id="metric-omega" class="metric-value cyan">0.0</span>
-                  <span class="metric-unit">I/s</span>
-                </div>
-                <div class="metric-bar-track">
-                  <div id="bar-omega" class="metric-bar-fill cyan" style="width: 4%"></div>
-                </div>
-              </div>
-
-              <div class="metric-card">
-                <span class="metric-label">AMPLITUDE A = f(I)</span>
-                <div class="metric-value-row">
-                  <span id="metric-amplitude" class="metric-value magenta">0.045</span>
-                  <span class="metric-unit">ℓs</span>
-                </div>
-                <div class="metric-bar-track">
-                  <div id="bar-amplitude" class="metric-bar-fill magenta" style="width: 8%"></div>
-                </div>
-              </div>
-
-              <div class="metric-card">
-                <span class="metric-label">SATURATION S = H/5</span>
-                <div class="metric-value-row">
-                  <span id="metric-saturation" class="metric-value">55.0</span>
-                  <span class="metric-unit">%</span>
-                </div>
-              </div>
-
-              <div class="metric-card">
-                <span class="metric-label">TOKEN FLUX</span>
-                <div class="metric-value-row">
-                  <span id="metric-tps" class="metric-value">0.0</span>
-                  <span class="metric-unit">tok/s</span>
-                </div>
-              </div>
-            </div>
-
-            <!-- Live Waveform Sparkline -->
-            <div class="waveform-box">
-              <div class="waveform-label-row">
-                <span>INFORMATION RATE // LAST 56 TOKENS</span>
-                <span id="manifold-equation">z₁⁵ + z₂⁵ = 1</span>
-              </div>
-              <canvas id="harmonic-sparkline" width="280" height="44"></canvas>
-            </div>
-          </aside>
-
-          <!-- Bottom-Left Parametric Manifold & Higher-Dimensional Science Controls -->
-          <aside class="manifold-controls">
-            <div class="control-group">
-              <label for="dimension-space-select">
-                <span>DIMENSIONAL SPACE (2D–11D)</span>
-                <span id="val-dimension-badge">6D CALABI-YAU</span>
+            <div class="dock-group">
+              <div class="dock-title">VIEW</div>
+              <label class="ctl check"><input id="auto-spin" type="checkbox" /><span>Spin through hidden axes</span></label>
+              <label class="ctl"><span>Spin speed <em id="val-speed">0.35</em></span><input id="spin-speed" type="range" min="0.05" max="1.5" step="0.05" value="0.35" /></label>
+              <label class="ctl">
+                <span>Projection</span>
+                <select id="projection">
+                  <option value="perspective">Perspective (a camera in each extra axis)</option>
+                  <option value="orthographic">Orthographic (drop extra axes)</option>
+                  <option value="stereographic">Stereographic (4D sphere → 3D)</option>
+                </select>
               </label>
-              <select id="dimension-space-select" class="cyber-select" title="Select Higher-Dimensional Manifold or Polytope"></select>
             </div>
 
-            <div class="control-group">
-              <label for="slider-exponent">
-                <span>FERMAT DEGREE (n)</span>
-                <span id="val-exponent">5 (25 sheets)</span>
-              </label>
-              <input id="slider-exponent" type="range" min="2" max="7" step="1" value="5" />
-            </div>
-
-            <div class="control-group">
-              <label for="slider-phase">
-                <span>4D KÄHLER PHASE (ξ)</span>
-                <span id="val-phase">0.68 rad</span>
-              </label>
-              <input id="slider-phase" type="range" min="0" max="3.1416" step="0.02" value="0.68" />
-            </div>
-
-            <div class="control-group">
-              <label for="slider-slice-w">
-                <span>4D HYPERPLANE SLICE (w₄)</span>
-                <span id="val-slice-w">OFF (FULL)</span>
-              </label>
-              <div style="display:flex;gap:6px;align-items:center;">
-                <input id="check-slice-enabled" type="checkbox" title="Enable 4D Hyperplane Cross-Section Slicing (w₄ = c)" />
-                <input id="slider-slice-w" type="range" min="-1.5" max="1.5" step="0.05" value="0.0" style="flex:1;" />
-              </div>
-            </div>
-
-            <div class="control-group">
-              <label for="slider-resolution">
-                <span>MESH DENSITY</span>
-                <span id="val-resolution">18×18</span>
-              </label>
-              <input id="slider-resolution" type="range" min="10" max="24" step="2" value="18" />
-            </div>
-
-            <div class="control-group">
-              <label for="graphics-profile-select">
-                <span>HARDWARE GRAPHICS (LOD)</span>
-                <span id="val-graphics-badge">AUTO GPU</span>
-              </label>
-              <select id="graphics-profile-select" class="cyber-select" title="Hardware-Adaptive Graphics Profile (RTX 5060 Ti / RTX 4060 Dell G15 / Steam Deck / Low-End)">
-                <option value="auto">AUTO-DETECT GPU (ADAPTIVE LOD)</option>
-                <option value="ultra">ULTRA // RTX 5060 Ti DESKTOP RIG</option>
-                <option value="high">HIGH // RTX 4060 DELL G15 LAPTOP</option>
-                <option value="steam-deck">HANDHELD // STEAM DECK (1280×800 APU)</option>
-                <option value="low">LOW-END // INTEGRATED APU &amp; ECO</option>
-              </select>
-            </div>
-          </aside>
-
-          <!-- Right-Side Spectral Inference Instrument -->
-          <aside id="instrument-hud" class="instrument-hud">
-            <div class="hud-header">
-              <span class="hud-kicker">SPECTRAL INFERENCE INSTRUMENT</span>
-              <span id="instrument-status" class="hud-badge">IDLE</span>
-            </div>
-
-            <div class="instrument-section">
-              <div class="section-label-row">
-                <span>SHEET ENERGY E[k₁,k₂]</span>
-                <span class="section-hint">rows: timing mode · cols: content mode</span>
-              </div>
-              <div class="heatmap-wrap">
-                <canvas id="sheet-heatmap" width="168" height="168" title="Click a sheet to set the control-surface target"></canvas>
-                <canvas id="band-spectra" width="104" height="168"></canvas>
-              </div>
-            </div>
-
-            <details class="instrument-section" open>
-              <summary class="section-label-row">
-                <span>11-D INSTRUMENT STATE</span>
-                <button id="btn-export-state" type="button" class="mini-link-btn">COPY STATE JSON</button>
-              </summary>
-              <div id="state-vector" class="state-vector"></div>
-            </details>
-
-            <details class="instrument-section" open>
-              <summary class="section-label-row"><span>TRAJECTORY GEOMETRY &amp; D₂</span></summary>
-              <div id="trajectory-metrics" class="kv-list"></div>
-            </details>
-
-            <details class="instrument-section" open>
-              <summary class="section-label-row"><span>TOPOLOGICAL INVARIANTS &amp; METRIC gᵢⱼ</span></summary>
-              <div id="dimension-invariants-panel" class="kv-list"></div>
-            </details>
-
-            <details class="instrument-section" open>
-              <summary class="section-label-row">
-                <span>FRONTIER LAB WITNESS (H₀/H₁ · BERRY · LAWS)</span>
-                <button id="btn-open-witness-dossier" type="button" class="mini-link-btn">OPEN DOSSIER</button>
-              </summary>
-              <canvas
-                id="homology-barcode"
-                width="270"
-                height="52"
-                style="width:100%;height:52px;background:rgba(2,6,14,0.75);border:1px solid rgba(0,243,255,0.18);border-radius:4px;margin-bottom:6px;"
-                title="Vietoris-Rips Persistent Homology Barcode: H₀ connected components (cyan) &amp; H₁ 1-cycles (magenta)"
-              ></canvas>
-              <div id="frontier-witness-panel" class="kv-list"></div>
-            </details>
-
-            <details class="instrument-section" open>
-              <summary class="section-label-row"><span>REGIME EVENTS</span></summary>
-              <div id="regime-log" class="regime-log"></div>
-            </details>
-
-            <details class="instrument-section" open>
-              <summary class="section-label-row"><span>CONTROL SURFACE</span></summary>
-              <div class="control-surface-grid">
-                <label class="cs-field">
-                  <span>MODE</span>
-                  <select id="control-mode" class="cyber-select">
-                    <option value="off">OFF</option>
-                    <option value="open">OPEN LOOP</option>
-                    <option value="closed">CLOSED LOOP</option>
-                  </select>
-                </label>
-                <label class="cs-field">
-                  <span>TARGET A <em id="val-control-amplitude">0.35</em></span>
-                  <input id="control-amplitude" type="range" min="0.05" max="0.65" step="0.01" value="0.35" />
-                </label>
-                <label class="cs-check">
-                  <input id="control-autoroute" type="checkbox" />
-                  <span>AUTO-ROUTE PROVIDER BY FINGERPRINT</span>
-                </label>
-                <button id="btn-control-reset" type="button" class="mini-link-btn">RESET LOOP</button>
-              </div>
-              <div id="control-readout" class="control-readout"></div>
-              <div id="route-list" class="kv-list"></div>
-            </details>
-
-            <details class="instrument-section" open>
-              <summary class="section-label-row"><span>MULTI-MODEL INTERFERENCE</span></summary>
-              <div id="interference-panel" class="kv-list"></div>
-            </details>
-
-            <details class="instrument-section" open>
-              <summary class="section-label-row">
-                <span>GENERATION FINGERPRINTS</span>
-                <span>
-                  <button id="btn-export-fingerprints" type="button" class="mini-link-btn">EXPORT</button>
-                  <button id="btn-clear-fingerprints" type="button" class="mini-link-btn">CLEAR</button>
-                </span>
-              </summary>
-              <div id="fingerprint-list" class="fingerprint-list"></div>
-              <div id="fingerprint-compare" class="control-readout"></div>
-            </details>
-          </aside>
-        </section>
-
-        <!-- Right-Side Streaming Chat Overlay -->
-        <section id="cyber-chat-panel" class="chat-panel">
-          <div class="chat-panel-header">
-            <div class="chat-header-top">
-              <div class="chat-header-title">
-                <span class="terminal-prompt">&gt;_</span>
-                <span>UNIVERSAL QUANTUM LLM BRIDGE</span>
-              </div>
-              <span id="provider-env-badge" class="env-pill">OLLAMA_API_KEY</span>
-            </div>
-
-            <div class="provider-model-matrix">
-              <div class="selector-field">
-                <label for="provider-select" class="selector-label">PROVIDER NEXUS (19 CLOUD + LOCAL)</label>
-                <select id="provider-select" class="cyber-select" title="Select AI Provider"></select>
-              </div>
-
-              <div class="selector-field">
-                <label for="model-select" class="selector-label">FRONTIER MODEL (2026 CATALOG)</label>
-                <select id="model-select" class="cyber-select" title="Select Frontier Model"></select>
-              </div>
-            </div>
-
-            <div class="swarm-bar">
-              <button id="btn-toggle-swarm" type="button" class="hud-chip-btn" title="Run the same prompt on several provider/model lanes in parallel">
-                SWARM LANES <span id="swarm-count">(0)</span>
-              </button>
-              <span id="sampling-readout" class="sampling-readout">sampling: provider defaults</span>
-            </div>
-
-            <div id="swarm-drawer" class="config-drawer hidden">
-              <div class="swarm-drawer-header">
-                <span>Each lane streams in parallel and is superposed on the shared sheets.</span>
-                <button id="btn-add-lane" type="button" class="mini-link-btn">+ ADD CURRENT PROVIDER/MODEL</button>
-              </div>
-              <div id="swarm-lane-list" class="swarm-lane-list"></div>
-            </div>
-
-            <!-- Collapsible API Key / Custom Endpoint / Custom Model Drawer -->
-            <div id="config-drawer" class="config-drawer hidden">
-              <div class="config-field">
-                <label for="api-key-input">
-                  <span>BEARER / API KEY</span>
-                  <span id="api-key-hint">Stored locally in encrypted session storage or env var</span>
-                </label>
-                <input
-                  id="api-key-input"
-                  type="password"
-                  class="cyber-input"
-                  placeholder="Paste API key (e.g. OLLAMA_API_KEY, sk-..., AIza...) or leave blank to use env"
-                  autocomplete="off"
-                />
-              </div>
-
-              <div class="config-row-split">
-                <div class="config-field">
-                  <label for="endpoint-input"><span>API ENDPOINT OVERRIDE</span></label>
-                  <input
-                    id="endpoint-input"
-                    type="text"
-                    class="cyber-input"
-                    placeholder="https://ollama.com/api/chat"
-                  />
-                </div>
-                <div class="config-field">
-                  <label for="custom-model-input"><span>CUSTOM MODEL SLUG (OPTIONAL)</span></label>
-                  <input
-                    id="custom-model-input"
-                    type="text"
-                    class="cyber-input"
-                    placeholder="e.g. gemma4:31b or gpt-6-astra"
-                  />
-                </div>
-              </div>
+            <div id="slice-controls" class="dock-group">
+              <div class="dock-title">CROSS-SECTION</div>
+              <label class="ctl check"><input id="slice-on" type="checkbox" /><span>Slice the hidden axis</span></label>
+              <label class="ctl"><span>Slice at <em id="val-slice">0.00</em></span><input id="slice-level" type="range" min="-1.2" max="1.2" step="0.01" value="0" /></label>
+              <label class="ctl check"><input id="slice-only" type="checkbox" /><span>Show only the slice</span></label>
             </div>
           </div>
-
-          <div id="chat-messages" class="chat-messages">
-            <article class="msg-bubble system">
-              <div class="msg-meta">
-                <span class="msg-role">SYSTEM // MULTI-PROVIDER GEOMETRIC KERNEL</span>
-                <span class="msg-metric">χ = −200</span>
-              </div>
-              <div class="msg-content">
-                Calabi-Yau quintic threefold cross-section initialized in ℂℙ⁴. Connected to
-                <code>Ollama Cloud (https://ollama.com/api/chat)</code> plus 18 frontier providers
-                (Anthropic Claude 5.5, OpenAI GPT-6 Astra / 6.1 Sol, Google Gemini 4 Argon, xAI Grok 4.7,
-                DeepSeek V4.1 Flash, Meta Muse Wonder, Qwen 3.8 Max, Kimi K3, GLM-5.3, Mistral Large 4,
-                OpenRouter, Groq, Together, Fireworks, Perplexity, Cerebras, NVIDIA NIM, and Ollama Local).
-              </div>
-            </article>
-          </div>
-
-          <form id="chat-form" class="chat-input-bar">
-            <textarea
-              id="prompt-input"
-              class="cyber-textarea"
-              rows="2"
-              placeholder="Transmit query or shader directive to selected manifold... (Enter to send, Shift+Enter for newline)"
-              required
-            ></textarea>
-            <div class="chat-actions-col">
-              <button type="submit" id="btn-send" class="cyber-send-btn">
-                <span>TRANSMIT</span>
-              </button>
-              <button type="button" id="btn-simulate" class="cyber-sim-btn" title="Simulate streaming inference">
-                <span>SIMULATE</span>
-              </button>
-            </div>
-          </form>
         </section>
+
+        <aside id="notes" class="notes">
+          <h1 id="notes-title">—</h1>
+          <p id="notes-dim" class="muted"></p>
+
+          <h2>What you are seeing</h2>
+          <p id="notes-what"></p>
+          <h2>How it is drawn</h2>
+          <p id="notes-how"></p>
+          <h2>Try this</h2>
+          <ul id="notes-try"></ul>
+          <h2>Facts</h2>
+          <dl id="notes-facts" class="facts"></dl>
+
+          <section class="ask">
+            <div class="ask-head">
+              <h2>Ask about this</h2>
+              <button id="btn-ask-settings" class="link" type="button">MODEL</button>
+            </div>
+            <div id="ask-settings" class="ask-settings hidden">
+              <label class="ctl"><span>Provider</span><select id="ask-provider"></select></label>
+              <label class="ctl"><span>Model</span><select id="ask-model"></select></label>
+              <label class="ctl"><span>Custom model (optional)</span><input id="ask-custom-model" type="text" placeholder="e.g. gemma4:31b" /></label>
+              <label class="ctl"><span>API key</span><input id="ask-key" type="password" autocomplete="off" placeholder="Leave blank to use the provider's environment variable" /></label>
+              <label class="ctl"><span>Endpoint override</span><input id="ask-endpoint" type="text" /></label>
+              <button id="btn-sync-models" class="link" type="button">FETCH LIVE MODEL LIST</button>
+            </div>
+            <div id="ask-log" class="ask-log"></div>
+            <form id="ask-form" class="ask-form">
+              <textarea id="ask-input" rows="2" placeholder="Why does the tesseract seem to turn inside out?"></textarea>
+              <button id="ask-send" type="submit" class="chip accent">ASK</button>
+            </form>
+          </section>
+        </aside>
       </main>
-
-      <!-- Live Multi-File Application Builder & Guarded Machine Harness Modal -->
-      <div id="build-launcher-modal" class="launcher-modal hidden">
-        <div class="launcher-dialog">
-          <header class="launcher-header">
-            <div class="launcher-title-group">
-              <span class="brand-glyph">APP // BUILDER</span>
-              <span id="launcher-title">AUTONOMOUS MULTI-FILE APPLICATION BUILDER &amp; PC HARNESS</span>
-              <span id="launcher-status-pill" class="env-pill">~/CalabiYauProjects/builds</span>
-            </div>
-            <div class="launcher-actions">
-              <select id="builder-guardrail-select" class="cyber-select" style="width:auto;padding:4px 8px;font-size:10px;" title="PC Access Guardrail Policy">
-                <option value="workspace-guarded">GUARDRAIL: WORKSPACE GUARDED</option>
-                <option value="strict-sandbox">GUARDRAIL: STRICT SANDBOX</option>
-                <option value="dry-run">GUARDRAIL: DRY-RUN ONLY</option>
-              </select>
-              <button id="btn-launcher-preset" class="hud-chip-btn" title="Load Fermat Quintic Euler ξ = e (0.500 THz) Hologram Preset">
-                LOAD EULER 0.5THz SHADER
-              </button>
-              <button id="btn-launcher-witness" class="hud-chip-btn" title="Launch Interactive Frontier Mathematical Witness &amp; Merkle Proof Dossier">
-                WITNESS DOSSIER
-              </button>
-              <button id="btn-launcher-save-disk" class="hud-chip-btn emerald" title="Save active multi-file build directly to ~/CalabiYauProjects/builds on your machine">
-                SAVE BUILD TO DISK
-              </button>
-              <button id="btn-launcher-run-app" class="hud-chip-btn emerald" title="Install dependencies and start this project on your machine (npm start / electron / python / node server)">
-                LAUNCH APP &#9654;
-              </button>
-              <button id="btn-launcher-native-win" class="hud-chip-btn" title="Spawn a dedicated native OS window running this build">
-                SPAWN NATIVE WINDOW
-              </button>
-              <button id="btn-launcher-download" class="hud-chip-btn" title="Download standalone .html artifact">
-                DOWNLOAD .HTML
-              </button>
-              <button id="btn-launcher-close" class="hud-chip-btn accent">
-                CLOSE [ESC]
-              </button>
-            </div>
-          </header>
-
-          <!-- Prompt-Driven Multi-File Application Synthesis Bar -->
-          <div class="builder-synth-bar" style="display:flex;gap:8px;padding:10px 16px;background:rgba(4,10,22,0.92);border-bottom:1px solid rgba(0,243,255,0.22);align-items:center;flex-wrap:wrap;">
-            <select id="builder-template-select" class="cyber-select" style="width:230px;" title="Select Application Template">
-              <option value="auto">AUTO-DETECT TEMPLATE</option>
-              <option value="electron-desktop">ELECTRON DESKTOP APP</option>
-              <option value="tauri-rust-app">TAURI + RUST NATIVE APP</option>
-              <option value="react-vite-app">MODERN WEB APP SUITE</option>
-              <option value="fullstack-node-api">FULL-STACK NODE.JS REST API</option>
-              <option value="python-science-cli">PYTHON SCIENCE LAB &amp; CLI</option>
-              <option value="dimensional-lab">4D–11D DIMENSIONAL SCIENCE LAB</option>
-              <option value="webgl-shader-app">WEBGL / GLSL SHADER STUDIO</option>
-              <option value="frontier-verify-lab">FRONTIER AI WITNESS &amp; HOMOLOGY LAB</option>
-            </select>
-            <input
-              id="builder-prompt-input"
-              type="text"
-              class="cyber-input"
-              style="flex:1;min-width:240px;"
-              placeholder="Describe any app to build (e.g. 'Build an Electron desktop modular audio synth studio' or '4D Hopf fibration &amp; Klein bottle lab')..."
-            />
-            <button id="btn-builder-synthesize" type="button" class="hud-chip-btn emerald">
-              AUTONOMOUS BUILD &amp; VERIFY &#9654;
-            </button>
-          </div>
-
-          <div class="launcher-body">
-            <!-- Left Sidebar: Multi-File Project Explorer, Build Pipeline Stages & Guarded PC Terminal -->
-            <aside class="launcher-sidebar">
-              <div class="sidebar-section-header">
-                <span>BUILD PIPELINE &amp; NOVELTY VERIFIER</span>
-                <span id="builder-novelty-badge" class="mini-link-btn">READY</span>
-              </div>
-              <div id="builder-stages-log" class="saved-projects-list" style="max-height:110px;font-size:10px;">
-                <div class="saved-project-empty">
-                  Autonomous 5-stage loop: Intent &amp; Novelty Check &rarr; Template Scaffold &rarr; Self-Heal &rarr; Write to <code>~/CalabiYauProjects/builds/&lt;slug&gt;</code> &rarr; Toolchain Verify.
-                </div>
-              </div>
-
-              <div class="sidebar-section-header">
-                <span>PROJECT FILES (<span id="active-build-slug">live-build</span>)</span>
-                <button id="btn-rerun-source" class="mini-link-btn">RUN PREVIEW &#9654;</button>
-              </div>
-              <div id="project-files-tabs" style="display:flex;gap:4px;flex-wrap:wrap;padding:6px 10px;background:rgba(0,0,0,0.35);border-bottom:1px solid rgba(0,243,255,0.15);"></div>
-              <textarea
-                id="launcher-source-editor"
-                class="launcher-source-editor"
-                spellcheck="false"
-                placeholder="Select any project file tab or edit generated HTML / Electron main.cjs / GLSL shader code here..."
-              ></textarea>
-
-              <div class="sidebar-section-header">
-                <span>GUARDED PC COMMAND RUNNER</span>
-                <button id="btn-run-pc-cmd" class="mini-link-btn">EXEC</button>
-              </div>
-              <div style="display:flex;gap:6px;padding:6px 10px;background:rgba(0,0,0,0.4);">
-                <input
-                  id="pc-command-input"
-                  type="text"
-                  class="cyber-input"
-                  style="font-size:11px;padding:4px 8px;"
-                  value="node test.mjs"
-                  placeholder="Allowed dev cmd (e.g. node test.mjs, cargo --version)"
-                />
-              </div>
-              <pre id="pc-command-output" style="margin:0;padding:6px 10px;font-size:10px;max-height:76px;overflow:auto;background:#03060d;color:#7df9ff;border-bottom:1px solid rgba(0,243,255,0.14);">Guardrails active: writes &amp; commands scoped to ~/CalabiYauProjects/builds</pre>
-
-              <div class="sidebar-section-header">
-                <span>SAVED BUILDS (~/CalabiYauProjects/builds)</span>
-                <button id="btn-refresh-projects" class="mini-link-btn">REFRESH</button>
-              </div>
-              <div id="saved-projects-list" class="saved-projects-list">
-                <div class="saved-project-empty">
-                  Projects built via the Autonomous Application Builder are stored in <code>~/CalabiYauProjects/builds/</code>.
-                </div>
-              </div>
-            </aside>
-
-            <!-- Right Stage: Live Sandboxed Application & WebGL Runner -->
-            <section class="launcher-stage">
-              <iframe
-                id="sandbox-iframe"
-                class="sandbox-iframe"
-                sandbox="allow-scripts allow-same-origin"
-                title="Calabi-Yau Live Application Build Runner"
-              ></iframe>
-            </section>
-          </div>
-        </div>
-      </div>
     </div>
-
     <script type="module" src="/src/main.js"></script>
   </body>
 </html>

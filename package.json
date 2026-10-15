@@ -1,16 +1,15 @@
 {
-  "name": "calabi-yau-ai-platform",
+  "name": "calabi-yau-lab",
   "private": true,
-  "version": "0.6.2",
-  "description": "Calabi-Yau AI Platform: Autonomous Multi-File Application Builder, Guarded PC Harness & 2D–11D Higher-Dimensional Scientific Instrument",
+  "version": "0.7.0",
+  "description": "Calabi-Yau Lab: see what higher dimensions look like",
   "type": "module",
   "scripts": {
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview",
     "tauri": "tauri",
-    "test": "node --test tests/*.test.js",
-    "build-app": "node scripts/calabi-build.mjs"
+    "test": "node --test tests/*.test.js"
   },
   "dependencies": {
     "@tauri-apps/api": "^1.6.0",

@@ -1,2336 +1,363 @@
 import { invoke } from '@tauri-apps/api/tauri';
 import { listen } from '@tauri-apps/api/event';
 import { appWindow } from '@tauri-apps/api/window';
-import { CalabiYauCanvas } from './CalabiYauCanvas.js';
-import { AI_PROVIDERS } from './providers.js';
-import { InstrumentConsole, LANE_COLORS } from './instrumentConsole.js';
-import { DIMENSION_CATALOG } from './dimensions/dimensionalEngine.js';
-import {
-  compileApplicationProject,
-  runAutonomousBuildLoop,
-  isApplicationBuildPrompt,
-  isConversationalFillerPrompt,
-  bundlePreviewHtml,
-  buildMultiFileSystemPrompt,
-  analyzeBuildIntent,
-  generateFrontierWitnessDossierHtml,
-  mintProofCarryingCertificate,
-  runLlmBuildHarness,
-} from './builder/index.js';
+import { LabViewer } from './lab/viewer.js';
+import { SPACES, getSpace, defaultParams } from './lab/catalog.js';
+import { createAsk } from './lab/ask.js';
 
-const isTauriDesktop =
-  typeof window !== 'undefined' &&
-  Boolean(window.__TAURI_IPC__ || window.__TAURI_METADATA__ || window.__TAURI__);
-
-/**
- * Default standalone WebGL / Three.js / GLSL Fermat Quintic Holographic Wireframe preset
- * (matching the DeepSeek-V4.1-Flash Euler xi = e, 0.500 THz Simplex Noise burst shader).
- */
-const DEFAULT_EULER_QUINTIC_BUILD_HTML = `<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Fermat Quintic Holographic Wireframe (xi = e, 0.500 THz)</title>
-  <style>
-    body { margin: 0; overflow: hidden; background: #000; font-family: monospace; }
-    canvas { display: block; }
-    .hud-tag {
-      position: fixed; top: 12px; left: 14px; color: #00f3ff;
-      background: rgba(4, 10, 24, 0.82); border: 1px solid rgba(0, 243, 255, 0.4);
-      padding: 6px 10px; border-radius: 4px; font-size: 11px; letter-spacing: 0.08em;
-      pointer-events: none;
-    }
-  </style>
-</head>
-<body>
-  <div class="hud-tag">FERMAT QUINTIC Σ zᵢ⁵ = 0 // ξ = e (2.71828 rad) // 0.500 THz SIMPLEX BURST</div>
-  <script type="importmap">
-    {
-      "imports": {
-        "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
-        "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
-      }
-    }
-  </script>
-  <script type="module">
-    import * as THREE from 'three';
-    import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
-    import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
-    import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
-    import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
-
-    const vertexShader = \`
-      uniform float uTime;
-      uniform float uEuler;
-      uniform float uBurstFreq;
-      uniform float uNoiseAmp;
-      uniform float uSheet;
-      uniform float uXiOffset;
-
-      varying vec3 vColor;
-      varying float vIntensity;
-
-      vec3 mod289(vec3 x) { return x - floor(x * (1.0 / 289.0)) * 289.0; }
-      vec4 mod289(vec4 x) { return x - floor(x * (1.0 / 289.0)) * 289.0; }
-      vec4 permute(vec4 x) { return mod289(((x*34.0)+1.0)*x); }
-      vec4 taylorInvSqrt(vec4 r) { return 1.79284291400159 - 0.85373472095314 * r; }
-
-      float snoise(vec3 v) {
-        const vec2 C = vec2(1.0/6.0, 1.0/3.0);
-        const vec4 D = vec4(0.0, 0.5, 1.0, 2.0);
-        vec3 i  = floor(v + dot(v, C.yyy));
-        vec3 x0 = v - i + dot(i, C.xxx);
-        vec3 g = step(x0.yzx, x0.xyz);
-        vec3 l = 1.0 - g;
-        vec3 i1 = min(g.xyz, l.zxy);
-        vec3 i2 = max(g.xyz, l.zxy);
-        vec3 x1 = x0 - i1 + C.xxx;
-        vec3 x2 = x0 - i2 + C.yyy;
-        vec3 x3 = x0 - D.yyy;
-        i = mod289(i);
-        vec4 p = permute(permute(permute(
-                   i.z + vec4(0.0, i1.z, i2.z, 1.0))
-                 + i.y + vec4(0.0, i1.y, i2.y, 1.0))
-                 + i.x + vec4(0.0, i1.x, i2.x, 1.0));
-        float n_ = 0.142857142857;
-        vec3 ns = n_ * D.wyz - D.xzx;
-        vec4 j = p - 49.0 * floor(p * ns.z * ns.z);
-        vec4 x_ = floor(j * ns.z);
-        vec4 y_ = floor(j - 7.0 * x_);
-        vec4 x = x_ * ns.x + ns.yyyy;
-        vec4 y = y_ * ns.x + ns.yyyy;
-        vec4 h = 1.0 - abs(x) - abs(y);
-        vec4 b0 = vec4(x.xy, y.xy);
-        vec4 b1 = vec4(x.zw, y.zw);
-        vec4 s0 = floor(b0) * 2.0 + 1.0;
-        vec4 s1 = floor(b1) * 2.0 + 1.0;
-        vec4 sh = -step(h, vec4(0.0));
-        vec4 a0 = b0.xzyw + s0.xzyw * sh.xxyy;
-        vec4 a1 = b1.xzyw + s1.xzyw * sh.zzww;
-        vec3 p0 = vec3(a0.xy, h.x);
-        vec3 p1 = vec3(a0.zw, h.y);
-        vec3 p2 = vec3(a1.xy, h.z);
-        vec3 p3 = vec3(a1.zw, h.w);
-        vec4 norm = taylorInvSqrt(vec4(dot(p0,p0), dot(p1,p1), dot(p2,p2), dot(p3,p3)));
-        p0 *= norm.x; p1 *= norm.y; p2 *= norm.z; p3 *= norm.w;
-        vec4 m = max(0.6 - vec4(dot(x0,x0), dot(x1,x1), dot(x2,x2), dot(x3,x3)), 0.0);
-        m = m * m;
-        return 42.0 * dot(m*m, vec4(dot(p0,x0), dot(p1,x1), dot(p2,x2), dot(p3,x3)));
-      }
-
-      void main() {
-        vec3 pos = position;
-        vec3 nor = normalize(normal);
-
-        // Map Euler's constant e to phase angle xi
-        float xi = uEuler * (pos.x * 1.3 + pos.y * 0.7 + pos.z * 1.1 + uTime * 0.1) + uXiOffset;
-
-        float theta0 = xi * 1.0 + pos.x * 2.0;
-        float theta1 = xi * 1.3 + pos.y * 2.3;
-        float theta2 = xi * 1.7 + pos.z * 2.7;
-        float theta3 = xi * 2.1 + (pos.x + pos.y) * 1.9;
-        float theta4 = xi * 2.5 + (pos.y + pos.z) * 2.1;
-
-        vec2 F = vec2(cos(5.0 * theta0), sin(5.0 * theta0))
-               + vec2(cos(5.0 * theta1), sin(5.0 * theta1))
-               + vec2(cos(5.0 * theta2), sin(5.0 * theta2))
-               + vec2(cos(5.0 * theta3), sin(5.0 * theta3))
-               + vec2(cos(5.0 * theta4), sin(5.0 * theta4));
-
-        float fMag = length(F);
-        float fermatWarp = (F.x * F.y) * 0.35 + (1.0 - fMag) * 0.2;
-
-        // Artificial 0.500 THz inference burst envelope
-        float burstPhase = uTime * 6.28318530718 * uBurstFreq * 12.0;
-        float burst = pow(0.5 + 0.5 * sin(burstPhase), 4.0);
-
-        float noiseAmp = uNoiseAmp * (0.15 + 0.85 * burst);
-        float noise1 = snoise(pos * 2.5 + vec3(xi * 0.5, uTime * 0.3, uSheet * 10.0));
-        float noise2 = snoise(pos * 5.0 + vec3(uTime * 0.7, xi * 0.2, uSheet * 5.0));
-
-        vec3 sheetOffset = vec3(
-          sin(xi * 2.0 + uSheet * 1.7),
-          cos(xi * 3.0 + uSheet * 2.3),
-          sin(xi * 5.0 + uSheet * 3.1)
-        ) * 0.25 * uSheet;
-
-        float displacement = fermatWarp + (noise1 * 0.6 + noise2 * 0.4) * noiseAmp;
-        pos += nor * displacement + sheetOffset;
-
-        float hue = fract(xi * 0.15 + fMag * 0.5 + uTime * 0.05);
-        vec3 colorA = vec3(0.0, 1.0, 1.0);
-        vec3 colorB = vec3(1.0, 0.0, 1.0);
-        vec3 colorC = vec3(1.0, 1.0, 0.0);
-        vColor = mix(mix(colorA, colorB, hue), colorC, burst * 0.5);
-        vIntensity = 0.85 + 1.55 * burst + 0.5 * abs(F.x);
-
-        gl_Position = projectionMatrix * modelViewMatrix * vec4(pos, 1.0);
-      }
-    \`;
-
-    const fragmentShader = \`
-      uniform float uTime;
-      varying vec3 vColor;
-      varying float vIntensity;
-
-      void main() {
-        vec3 color = vColor * vIntensity;
-        float scan = sin(gl_FragCoord.y * 0.5 + uTime * 20.0) * 0.1 + 0.9;
-        color = pow(color * scan, vec3(0.8));
-        gl_FragColor = vec4(color, 1.0);
-      }
-    \`;
-
-    const scene = new THREE.Scene();
-    scene.background = new THREE.Color(0x000000);
-    const camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 1000);
-    camera.position.set(0, 0, 5);
-
-    const renderer = new THREE.WebGLRenderer({ antialias: true });
-    renderer.setSize(window.innerWidth, window.innerHeight);
-    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
-    document.body.appendChild(renderer.domElement);
-
-    const controls = new OrbitControls(camera, renderer.domElement);
-    controls.enableDamping = true;
-    controls.autoRotate = true;
-    controls.autoRotateSpeed = 0.7;
-
-    const geometry = new THREE.IcosahedronGeometry(1.5, 5);
-    const sheets = 5;
-    const materials = [];
-
-    for (let i = 0; i < sheets; i++) {
-      const material = new THREE.ShaderMaterial({
-        uniforms: {
-          uTime:      { value: 0 },
-          uEuler:     { value: Math.E },
-          uBurstFreq: { value: 0.5 },
-          uNoiseAmp:  { value: 0.8 },
-          uSheet:     { value: i - (sheets - 1) / 2 },
-          uXiOffset:  { value: i * 1.2 }
-        },
-        vertexShader,
-        fragmentShader,
-        wireframe: true,
-        transparent: true,
-        blending: THREE.AdditiveBlending,
-        depthWrite: false,
-        side: THREE.DoubleSide
-      });
-
-      const mesh = new THREE.Mesh(geometry, material);
-      mesh.rotation.x = i * 0.2;
-      mesh.rotation.y = i * 0.3;
-      mesh.scale.setScalar(1.0 + i * 0.05);
-      scene.add(mesh);
-      materials.push(material);
-    }
-
-    const composer = new EffectComposer(renderer);
-    composer.addPass(new RenderPass(scene, camera));
-    composer.addPass(new UnrealBloomPass(new THREE.Vector2(window.innerWidth, window.innerHeight), 2.4, 0.8, 0.1));
-
-    const clock = new THREE.Clock();
-    function animate() {
-      requestAnimationFrame(animate);
-      const t = clock.getElapsedTime();
-      materials.forEach(m => { m.uniforms.uTime.value = t; });
-      controls.update();
-      composer.render();
-    }
-    animate();
-
-    window.addEventListener('resize', () => {
-      camera.aspect = window.innerWidth / window.innerHeight;
-      camera.updateProjectionMatrix();
-      renderer.setSize(window.innerWidth, window.innerHeight);
-      composer.setSize(window.innerWidth, window.innerHeight);
-    });
-  </script>
-</body>
-</html>`;
+const isTauri = typeof window !== 'undefined' && Boolean(window.__TAURI_IPC__ || window.__TAURI_METADATA__);
+const $ = (id) => document.getElementById(id);
+const STATE_KEY = 'calabi_lab_state_v1';
 
 const dom = {
-  viewport: document.getElementById('calabi-yau-viewport'),
-  workspaceGrid: document.getElementById('workspace-grid'),
-  statusBeacon: document.getElementById('status-beacon'),
-  activeProviderBanner: document.getElementById('active-provider-banner'),
-  runtimeBadge: document.getElementById('hud-runtime-mode'),
-  metricOmega: document.getElementById('metric-omega'),
-  metricAmplitude: document.getElementById('metric-amplitude'),
-  metricSaturation: document.getElementById('metric-saturation'),
-  metricTps: document.getElementById('metric-tps'),
-  barOmega: document.getElementById('bar-omega'),
-  barAmplitude: document.getElementById('bar-amplitude'),
-  manifoldEquation: document.getElementById('manifold-equation'),
-  sparklineCanvas: document.getElementById('harmonic-sparkline'),
-  dimensionSpaceSelect: document.getElementById('dimension-space-select'),
-  valDimensionBadge: document.getElementById('val-dimension-badge'),
-  sliderExponent: document.getElementById('slider-exponent'),
-  sliderPhase: document.getElementById('slider-phase'),
-  sliderResolution: document.getElementById('slider-resolution'),
-  checkSliceEnabled: document.getElementById('check-slice-enabled'),
-  sliderSliceW: document.getElementById('slider-slice-w'),
-  valSliceW: document.getElementById('val-slice-w'),
-  valExponent: document.getElementById('val-exponent'),
-  valPhase: document.getElementById('val-phase'),
-  valResolution: document.getElementById('val-resolution'),
-  graphicsProfileSelect: document.getElementById('graphics-profile-select'),
-  valGraphicsBadge: document.getElementById('val-graphics-badge'),
-  dimensionInvariantsPanel: document.getElementById('dimension-invariants-panel'),
-  dimensionalInvariants: document.getElementById('dimension-invariants-panel'),
-  homologyBarcode: document.getElementById('homology-barcode'),
-  frontierWitnessPanel: document.getElementById('frontier-witness-panel'),
-  btnWitnessDossier: document.getElementById('btn-witness-dossier'),
-  btnOpenWitnessDossier: document.getElementById('btn-open-witness-dossier'),
-  btnToggleConfig: document.getElementById('btn-toggle-config'),
-  btnSyncModels: document.getElementById('btn-sync-models'),
-  btnBuildLauncher: document.getElementById('btn-build-launcher'),
-  btnToggleLayout: document.getElementById('btn-toggle-layout'),
-  btnPulseTest: document.getElementById('btn-pulse-test'),
-  winMinimize: document.getElementById('win-minimize'),
-  winMaximize: document.getElementById('win-maximize'),
-  winClose: document.getElementById('win-close'),
-  providerSelect: document.getElementById('provider-select'),
-  modelSelect: document.getElementById('model-select'),
-  providerEnvBadge: document.getElementById('provider-env-badge'),
-  configDrawer: document.getElementById('config-drawer'),
-  apiKeyInput: document.getElementById('api-key-input'),
-  endpointInput: document.getElementById('endpoint-input'),
-  customModelInput: document.getElementById('custom-model-input'),
-  chatMessages: document.getElementById('chat-messages'),
-  chatForm: document.getElementById('chat-form'),
-  promptInput: document.getElementById('prompt-input'),
-  btnSend: document.getElementById('btn-send'),
-  btnSimulate: document.getElementById('btn-simulate'),
-  // Build Launcher & Machine Harness Modal DOM
-  buildLauncherModal: document.getElementById('build-launcher-modal'),
-  launcherTitle: document.getElementById('launcher-title'),
-  launcherStatusPill: document.getElementById('launcher-status-pill'),
-  builderGuardrailSelect: document.getElementById('builder-guardrail-select'),
-  builderTemplateSelect: document.getElementById('builder-template-select'),
-  builderPromptInput: document.getElementById('builder-prompt-input'),
-  btnBuilderSynthesize: document.getElementById('btn-builder-synthesize'),
-  builderNoveltyBadge: document.getElementById('builder-novelty-badge'),
-  builderStagesLog: document.getElementById('builder-stages-log'),
-  activeBuildSlug: document.getElementById('active-build-slug'),
-  projectFilesTabs: document.getElementById('project-files-tabs'),
-  pcCommandInput: document.getElementById('pc-command-input'),
-  btnRunPcCmd: document.getElementById('btn-run-pc-cmd'),
-  pcCommandOutput: document.getElementById('pc-command-output'),
-  btnLauncherPreset: document.getElementById('btn-launcher-preset'),
-  btnLauncherWitness: document.getElementById('btn-launcher-witness'),
-  btnLauncherSaveDisk: document.getElementById('btn-launcher-save-disk'),
-  btnLauncherNativeWin: document.getElementById('btn-launcher-native-win'),
-  btnLauncherDownload: document.getElementById('btn-launcher-download'),
-  btnLauncherClose: document.getElementById('btn-launcher-close'),
-  btnRefreshProjects: document.getElementById('btn-refresh-projects'),
-  savedProjectsList: document.getElementById('saved-projects-list'),
-  btnRerunSource: document.getElementById('btn-rerun-source'),
-  launcherSourceEditor: document.getElementById('launcher-source-editor'),
-  sandboxIframe: document.getElementById('sandbox-iframe'),
-  // Spectral inference instrument
-  instrumentStatus: document.getElementById('instrument-status'),
-  sheetHeatmap: document.getElementById('sheet-heatmap'),
-  bandSpectra: document.getElementById('band-spectra'),
-  stateVector: document.getElementById('state-vector'),
-  btnExportState: document.getElementById('btn-export-state'),
-  trajectoryMetrics: document.getElementById('trajectory-metrics'),
-  regimeLog: document.getElementById('regime-log'),
-  controlMode: document.getElementById('control-mode'),
-  controlAmplitude: document.getElementById('control-amplitude'),
-  valControlAmplitude: document.getElementById('val-control-amplitude'),
-  controlAutoRoute: document.getElementById('control-autoroute'),
-  btnControlReset: document.getElementById('btn-control-reset'),
-  controlReadout: document.getElementById('control-readout'),
-  routeList: document.getElementById('route-list'),
-  interferencePanel: document.getElementById('interference-panel'),
-  fingerprintList: document.getElementById('fingerprint-list'),
-  fingerprintCompare: document.getElementById('fingerprint-compare'),
-  btnExportFingerprints: document.getElementById('btn-export-fingerprints'),
-  btnClearFingerprints: document.getElementById('btn-clear-fingerprints'),
-  samplingReadout: document.getElementById('sampling-readout'),
-  btnToggleSwarm: document.getElementById('btn-toggle-swarm'),
-  swarmCount: document.getElementById('swarm-count'),
-  swarmDrawer: document.getElementById('swarm-drawer'),
-  btnAddLane: document.getElementById('btn-add-lane'),
-  swarmLaneList: document.getElementById('swarm-lane-list'),
+  spaceList: $('space-list'),
+  viewport: $('viewport'),
+  badge: $('space-badge'),
+  sliceReadout: $('slice-readout'),
+  toast: $('toast'),
+  params: $('param-controls'),
+  rotation: $('rotation-controls'),
+  rot: { xw: $('rot-xw'), yw: $('rot-yw'), zw: $('rot-zw') },
+  rotVal: { xw: $('val-xw'), yw: $('val-yw'), zw: $('val-zw') },
+  autoSpin: $('auto-spin'),
+  spinSpeed: $('spin-speed'),
+  valSpeed: $('val-speed'),
+  projection: $('projection'),
+  sliceControls: $('slice-controls'),
+  sliceOn: $('slice-on'),
+  sliceLevel: $('slice-level'),
+  valSlice: $('val-slice'),
+  sliceOnly: $('slice-only'),
+  notes: $('notes'),
+  notesTitle: $('notes-title'),
+  notesDim: $('notes-dim'),
+  notesWhat: $('notes-what'),
+  notesHow: $('notes-how'),
+  notesTry: $('notes-try'),
+  notesFacts: $('notes-facts'),
 };
 
-dom.runtimeBadge.textContent = isTauriDesktop ? 'TAURI // IPC READY' : 'WEBGL // STANDALONE';
-
-const STORAGE_KEY_PREFIX = 'calabi_yau_provider_cfg_';
-const LOCAL_PROJECTS_KEY = 'calabi_yau_saved_projects_v1';
-
-function loadProviderConfig(providerId) {
+function loadState() {
   try {
-    const raw = localStorage.getItem(`${STORAGE_KEY_PREFIX}${providerId}`);
-    return raw ? JSON.parse(raw) : {};
+    return JSON.parse(localStorage.getItem(STATE_KEY) || '{}');
   } catch {
     return {};
   }
 }
 
-function saveProviderConfig(providerId, patch) {
+const saved = loadState();
+const paramMemory = saved.params || {};
+let current = null;
+let params = {};
+let geometry = null;
+let rebuildTimer = null;
+
+function persist() {
   try {
-    const current = loadProviderConfig(providerId);
-    const updated = { ...current, ...patch };
-    localStorage.setItem(`${STORAGE_KEY_PREFIX}${providerId}`, JSON.stringify(updated));
+    localStorage.setItem(STATE_KEY, JSON.stringify({ space: current?.id, params: paramMemory }));
   } catch {
-    // Ignore storage quota errors
+    // Non-fatal: the lab still works without remembered settings.
   }
 }
 
-function getActiveProvider() {
-  const id = dom.providerSelect.value;
-  return AI_PROVIDERS.find((p) => p.id === id) || AI_PROVIDERS[0];
+function toast(text, ms = 2600) {
+  dom.toast.textContent = text;
+  dom.toast.classList.remove('hidden');
+  clearTimeout(toast.timer);
+  toast.timer = setTimeout(() => dom.toast.classList.add('hidden'), ms);
 }
 
-function getSelectedModelSlug() {
-  const custom = dom.customModelInput.value.trim();
-  if (custom) return custom;
-  return dom.modelSelect.value;
-}
-
-function populateProviders() {
-  dom.providerSelect.innerHTML = '';
-  for (const provider of AI_PROVIDERS) {
-    const opt = document.createElement('option');
-    opt.value = provider.id;
-    opt.textContent = provider.name;
-    dom.providerSelect.appendChild(opt);
-  }
-}
-
-function populateModelsForProvider(provider, extraModels = []) {
-  dom.modelSelect.innerHTML = '';
-  const seen = new Set();
-  const combined = [...extraModels, ...provider.models];
-
-  for (const m of combined) {
-    if (seen.has(m.id)) continue;
-    seen.add(m.id);
-    const opt = document.createElement('option');
-    opt.value = m.id;
-    opt.textContent = m.label || m.id;
-    dom.modelSelect.appendChild(opt);
-  }
-
-  const saved = loadProviderConfig(provider.id);
-  if (saved.selectedModel && seen.has(saved.selectedModel)) {
-    dom.modelSelect.value = saved.selectedModel;
-  }
-
-  dom.providerEnvBadge.textContent = provider.envKeyName || 'LOCAL // NO KEY';
-  dom.activeProviderBanner.textContent = `${provider.badge} // ${getSelectedModelSlug().toUpperCase()}`;
-  dom.endpointInput.placeholder = provider.defaultEndpoint;
-  dom.endpointInput.value = saved.endpoint || '';
-  dom.apiKeyInput.value = saved.apiKey || '';
-  dom.customModelInput.value = saved.customModel || '';
-}
-
-populateProviders();
-populateModelsForProvider(AI_PROVIDERS[0]);
-
-dom.providerSelect.addEventListener('change', () => {
-  const provider = getActiveProvider();
-  populateModelsForProvider(provider);
-});
-
-dom.modelSelect.addEventListener('change', () => {
-  const provider = getActiveProvider();
-  saveProviderConfig(provider.id, { selectedModel: dom.modelSelect.value });
-  dom.activeProviderBanner.textContent = `${provider.badge} // ${getSelectedModelSlug().toUpperCase()}`;
-});
-
-dom.apiKeyInput.addEventListener('input', () => {
-  const provider = getActiveProvider();
-  saveProviderConfig(provider.id, { apiKey: dom.apiKeyInput.value.trim() });
-});
-
-dom.endpointInput.addEventListener('input', () => {
-  const provider = getActiveProvider();
-  saveProviderConfig(provider.id, { endpoint: dom.endpointInput.value.trim() });
-});
-
-dom.customModelInput.addEventListener('input', () => {
-  const provider = getActiveProvider();
-  saveProviderConfig(provider.id, { customModel: dom.customModelInput.value.trim() });
-  dom.activeProviderBanner.textContent = `${provider.badge} // ${getSelectedModelSlug().toUpperCase()}`;
-});
-
-dom.btnToggleConfig.addEventListener('click', () => {
-  dom.configDrawer.classList.toggle('hidden');
-  dom.btnToggleConfig.classList.toggle('active');
-});
-
-async function syncLiveModels() {
-  const provider = getActiveProvider();
-  const originalText = dom.btnSyncModels.textContent;
-  dom.btnSyncModels.textContent = 'SYNCING...';
-
-  try {
-    let discovered = [];
-    if (isTauriDesktop) {
-      discovered = await invoke('fetch_provider_models', {
-        provider: provider.id,
-        apiKey: dom.apiKeyInput.value.trim() || null,
-        endpoint: null,
-      });
-    } else if (provider.tagsEndpoint) {
-      const headers = {};
-      const key = dom.apiKeyInput.value.trim();
-      if (key) headers['Authorization'] = `Bearer ${key}`;
-      const res = await fetch(provider.tagsEndpoint, { headers });
-      if (res.ok) {
-        const data = await res.json();
-        discovered = (data.models || []).map((m) => ({
-          id: m.name || m.model,
-          label: `${m.name || m.model} [Live]`,
-        }));
-      }
-    }
-
-    if (Array.isArray(discovered) && discovered.length > 0) {
-      populateModelsForProvider(provider, discovered);
-      dom.btnSyncModels.textContent = `SYNCED (${discovered.length})`;
-    } else {
-      dom.btnSyncModels.textContent = 'CATALOG READY';
-    }
-  } catch {
-    dom.btnSyncModels.textContent = 'CATALOG READY';
-  } finally {
-    setTimeout(() => {
-      dom.btnSyncModels.textContent = originalText;
-    }, 1800);
-  }
-}
-
-dom.btnSyncModels.addEventListener('click', syncLiveModels);
-
-// Harmonic Sparkline Renderer
-const sparkCtx = dom.sparklineCanvas.getContext('2d');
-const metricHistory = new Array(56).fill(0);
-
-function renderHarmonicSparkline() {
-  const width = dom.sparklineCanvas.width;
-  const height = dom.sparklineCanvas.height;
-  sparkCtx.clearRect(0, 0, width, height);
-
-  sparkCtx.strokeStyle = 'rgba(0, 243, 255, 0.14)';
-  sparkCtx.lineWidth = 1;
-  sparkCtx.beginPath();
-  sparkCtx.moveTo(0, height * 0.5);
-  sparkCtx.lineTo(width, height * 0.5);
-  sparkCtx.stroke();
-
-  const gradient = sparkCtx.createLinearGradient(0, 0, width, 0);
-  gradient.addColorStop(0, '#00f3ff');
-  gradient.addColorStop(0.6, '#8c52ff');
-  gradient.addColorStop(1, '#ff1e9b');
-
-  sparkCtx.strokeStyle = gradient;
-  sparkCtx.lineWidth = 2;
-  sparkCtx.beginPath();
-
-  const step = width / (metricHistory.length - 1);
-  const peak = Math.max(1, ...metricHistory);
-  for (let i = 0; i < metricHistory.length; i++) {
-    const normalized = Math.min(metricHistory[i] / peak, 1.0);
-    const x = i * step;
-    const y = height - 4 - normalized * (height - 8);
-    if (i === 0) {
-      sparkCtx.moveTo(x, y);
-    } else {
-      sparkCtx.lineTo(x, y);
-    }
-  }
-  sparkCtx.stroke();
-}
-
-renderHarmonicSparkline();
-
-function flashBeacon() {
-  dom.statusBeacon.classList.add('active');
-  clearTimeout(dom.statusBeacon._decayTimer);
-  dom.statusBeacon._decayTimer = setTimeout(() => {
-    dom.statusBeacon.classList.remove('active');
-  }, 180);
-}
-
-function renderTelemetry({ infoRate, amplitude, saturation, tokensPerSec }) {
-  if (Number.isFinite(infoRate)) {
-    dom.metricOmega.textContent = infoRate.toFixed(1);
-    dom.barOmega.style.width = `${Math.min(100, Math.max(4, (Math.tanh(infoRate / 80) * 100)))}%`;
-    metricHistory.push(infoRate);
-    if (metricHistory.length > 56) metricHistory.shift();
-    renderHarmonicSparkline();
-  }
-  dom.metricAmplitude.textContent = amplitude.toFixed(3);
-  dom.barAmplitude.style.width = `${Math.min(100, Math.max(6, (amplitude / 0.85) * 100))}%`;
-  dom.metricSaturation.textContent = (saturation * 100).toFixed(1);
-  if (Number.isFinite(tokensPerSec)) dom.metricTps.textContent = tokensPerSec.toFixed(1);
-  flashBeacon();
-}
-
-const GRAPHICS_STORAGE_KEY = 'calabi_yau_graphics_tier_v1';
-let savedGraphicsTier = 'auto';
-try {
-  savedGraphicsTier = localStorage.getItem(GRAPHICS_STORAGE_KEY) || 'auto';
-} catch {
-  savedGraphicsTier = 'auto';
-}
-
-const calabiYau = new CalabiYauCanvas(dom.viewport, {
-  graphicsTier: savedGraphicsTier,
-  onQuantumTelemetry({ amplitude, saturation }) {
-    renderTelemetry({ amplitude, saturation });
-  },
-  onGraphicsProfileChange() {
-    syncManifoldSlidersToCanvas();
+const viewer = new LabViewer(dom.viewport, {
+  onFrame: (v) => {
+    if (!v.slice.enabled || !current?.sliceable) return;
+    if ((v.frameTick = (v.frameTick || 0) + 1) % 10) return;
+    dom.sliceReadout.textContent = v.sliceCount
+      ? `slice: ${v.sliceCount} segments where the hidden axis = ${v.slice.level.toFixed(2)}`
+      : 'slice: empty here, move the level toward 0';
   },
 });
 
-const instrumentConsole = new InstrumentConsole({
-  canvas: calabiYau,
-  dom,
-  onTelemetry(frame) {
-    renderTelemetry({
-      infoRate: frame.features.infoRate,
-      amplitude: frame.amplitude,
-      saturation: frame.saturation,
-      tokensPerSec: frame.features.tokensPerSec,
+const dock = document.querySelector('.dock');
+new ResizeObserver(() => viewer.setBottomInset(dock.offsetHeight + 12)).observe(dock);
+
+// ---------------------------------------------------------------------------
+// Space list
+// ---------------------------------------------------------------------------
+
+function renderSpaceList() {
+  dom.spaceList.innerHTML = '';
+  const groups = [...new Set(SPACES.map((s) => s.group))];
+  for (const g of groups) {
+    const head = document.createElement('div');
+    head.className = 'group-title';
+    head.textContent = g;
+    dom.spaceList.appendChild(head);
+    for (const s of SPACES.filter((x) => x.group === g)) {
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'space-btn';
+      btn.dataset.id = s.id;
+      btn.textContent = s.title;
+      btn.addEventListener('click', () => selectSpace(s.id));
+      dom.spaceList.appendChild(btn);
+    }
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Controls
+// ---------------------------------------------------------------------------
+
+function renderParamControls() {
+  dom.params.innerHTML = '';
+  if (!current.params.length) {
+    dom.params.classList.add('hidden');
+    return;
+  }
+  dom.params.classList.remove('hidden');
+  const title = document.createElement('div');
+  title.className = 'dock-title';
+  title.textContent = 'OBJECT';
+  dom.params.appendChild(title);
+  for (const p of current.params) {
+    const label = document.createElement('label');
+    label.className = 'ctl';
+    const caption = document.createElement('span');
+    const val = document.createElement('em');
+    val.textContent = formatParam(p, params[p.key]);
+    caption.append(`${p.label} `, val);
+    const input = document.createElement('input');
+    Object.assign(input, { type: 'range', min: p.min, max: p.max, step: p.step, value: params[p.key] });
+    input.addEventListener('input', () => {
+      params[p.key] = Number(input.value);
+      paramMemory[current.id] = { ...params };
+      val.textContent = formatParam(p, params[p.key]);
+      scheduleRebuild();
     });
-  },
-});
-
-const superscriptDigits = ['⁰', '¹', '²', '³', '⁴', '⁵', '⁶', '⁷', '⁸', '⁹'];
-
-function populateDimensionCatalog() {
-  if (!dom.dimensionSpaceSelect) return;
-  dom.dimensionSpaceSelect.innerHTML = '';
-  for (const space of DIMENSION_CATALOG) {
-    const opt = document.createElement('option');
-    opt.value = space.id;
-    opt.textContent = `${space.dimension}D // ${space.name}`;
-    dom.dimensionSpaceSelect.appendChild(opt);
+    label.append(caption, input);
+    dom.params.appendChild(label);
   }
-  dom.dimensionSpaceSelect.value = calabiYau.dimensionSpaceId || 'calabi-yau-6d';
 }
 
-function syncManifoldSlidersToCanvas() {
-  const n = calabiYau.exponentN;
-  const xi = calabiYau.projectionAngle;
-  const res = calabiYau.resolution;
+function formatParam(p, v) {
+  return p.step < 1 ? Number(v).toFixed(2) : String(v);
+}
 
-  dom.sliderExponent.value = String(n);
-  dom.valExponent.textContent = `${n} (${n * n} sheets)`;
-  const sup = superscriptDigits[n] || `^${n}`;
+function scheduleRebuild() {
+  clearTimeout(rebuildTimer);
+  rebuildTimer = setTimeout(() => {
+    rebuild({ keepView: true });
+    persist();
+  }, 60);
+}
 
-  const activeSpace =
-    DIMENSION_CATALOG.find((s) => s.id === calabiYau.dimensionSpaceId) || DIMENSION_CATALOG[0];
-  if (dom.dimensionSpaceSelect) {
-    dom.dimensionSpaceSelect.value = activeSpace.id;
+function setRotation(angles) {
+  for (const k of ['xw', 'yw', 'zw']) {
+    const v = angles[k] ?? 0;
+    dom.rot[k].value = v;
+    dom.rotVal[k].textContent = v.toFixed(2);
   }
-  if (dom.valDimensionBadge) {
-    dom.valDimensionBadge.textContent = activeSpace.shortLabel;
-  }
-  dom.manifoldEquation.textContent =
-    activeSpace.id === 'calabi-yau-6d' ? `z₁${sup} + z₂${sup} = 1` : activeSpace.symbol;
+  viewer.setAngles({ xw: angles.xw ?? 0, yw: angles.yw ?? 0, zw: angles.zw ?? 0 });
+}
 
-  dom.sliderPhase.value = String(xi.toFixed(4));
-  dom.valPhase.textContent = `${xi.toFixed(2)} rad`;
-
-  dom.sliderResolution.value = String(res);
-  dom.valResolution.textContent = `${res}×${res}`;
-
-  if (dom.checkSliceEnabled) {
-    dom.checkSliceEnabled.checked = Boolean(calabiYau.sliceEnabled);
-  }
-  if (dom.sliderSliceW) {
-    dom.sliderSliceW.value = String(calabiYau.sliceW || 0);
-  }
-  if (dom.valSliceW) {
-    dom.valSliceW.textContent = calabiYau.sliceEnabled
-      ? `w₄ = ${(calabiYau.sliceW || 0).toFixed(2)}`
-      : 'OFF (FULL)';
-  }
-
-  if (calabiYau.getGraphicsStatus) {
-    const gfx = calabiYau.getGraphicsStatus();
-    if (dom.graphicsProfileSelect) {
-      dom.graphicsProfileSelect.value = gfx.mode || 'auto';
-    }
-    if (dom.valGraphicsBadge) {
-      const prefix = gfx.mode === 'auto' ? 'AUTO: ' : '';
-      dom.valGraphicsBadge.textContent = `${prefix}${gfx.profile.shortLabel}`;
-      dom.valGraphicsBadge.title = `${gfx.detectedHardware} — ${gfx.profile.description}`;
-    }
-  }
-
-  instrumentConsole.setDimensionConfig({
-    spaceId: activeSpace.id,
-    exponentN: n,
-    sliceEnabled: Boolean(calabiYau.sliceEnabled),
-    sliceW: Number(calabiYau.sliceW || 0),
-    rotXW: xi * 0.5,
+for (const k of ['xw', 'yw', 'zw']) {
+  dom.rot[k].addEventListener('input', () => {
+    const v = Number(dom.rot[k].value);
+    dom.rotVal[k].textContent = v.toFixed(2);
+    viewer.setAngles({ [k]: v });
   });
 }
 
-populateDimensionCatalog();
-syncManifoldSlidersToCanvas();
+dom.autoSpin.addEventListener('change', () => viewer.setAutoSpin(dom.autoSpin.checked));
+dom.spinSpeed.addEventListener('input', () => {
+  dom.valSpeed.textContent = Number(dom.spinSpeed.value).toFixed(2);
+  viewer.setAutoSpin(dom.autoSpin.checked, Number(dom.spinSpeed.value));
+});
+dom.projection.addEventListener('change', () => viewer.setProjection(dom.projection.value));
 
-if (dom.dimensionSpaceSelect) {
-  dom.dimensionSpaceSelect.addEventListener('change', (e) => {
-    const spaceId = e.target.value;
-    calabiYau.setManifoldParameters({ dimensionSpaceId: spaceId });
-    syncManifoldSlidersToCanvas();
-  });
+dom.sliceOn.addEventListener('change', () => {
+  viewer.setSlice({ enabled: dom.sliceOn.checked });
+  if (!dom.sliceOn.checked) dom.sliceReadout.textContent = '';
+});
+dom.sliceLevel.addEventListener('input', () => {
+  dom.valSlice.textContent = Number(dom.sliceLevel.value).toFixed(2);
+  viewer.setSlice({ level: Number(dom.sliceLevel.value) });
+});
+dom.sliceOnly.addEventListener('change', () => viewer.setSlice({ only: dom.sliceOnly.checked }));
+
+// ---------------------------------------------------------------------------
+// Selecting and rebuilding
+// ---------------------------------------------------------------------------
+
+function objectRadius(geo) {
+  let r = 0;
+  for (const p of geo.points) r = Math.max(r, Math.hypot(...p));
+  return r || 1;
 }
 
-if (dom.checkSliceEnabled) {
-  dom.checkSliceEnabled.addEventListener('change', (e) => {
-    const enabled = Boolean(e.target.checked);
-    const w = parseFloat(dom.sliderSliceW?.value || '0') || 0;
-    calabiYau.setManifoldParameters({ sliceEnabled: enabled, sliceW: w });
-    syncManifoldSlidersToCanvas();
-  });
+function rebuild({ keepView = false } = {}) {
+  geometry = current.build(params);
+  const dim = geometry.dim;
+  const radius = objectRadius(geometry);
+
+  dom.rotation.classList.toggle('hidden', dim < 4);
+  dom.sliceControls.classList.toggle('hidden', !current.sliceable);
+  const stereo = dom.projection.querySelector('option[value="stereographic"]');
+  stereo.disabled = dim !== 4;
+  if (dim !== 4 && dom.projection.value === 'stereographic') dom.projection.value = 'perspective';
+  if (dim < 4) dom.projection.value = 'perspective';
+  dom.projection.disabled = dim < 4;
+
+  const limit = Math.ceil(radius * 105) / 100;
+  dom.sliceLevel.min = -limit;
+  dom.sliceLevel.max = limit;
+  if (Math.abs(Number(dom.sliceLevel.value)) > limit) {
+    dom.sliceLevel.value = 0;
+    viewer.setSlice({ level: 0 });
+    dom.valSlice.textContent = '0.00';
+  }
+
+  const view = keepView ? { x: viewer.view.x, y: viewer.view.y } : null;
+  viewer.setObject(geometry, { projection: dom.projection.value, faceOn: current.id === 'e8' });
+  if (view) {
+    viewer.view.x = view.x;
+    viewer.view.y = view.y;
+  }
+  renderNotes();
 }
 
-if (dom.sliderSliceW) {
-  dom.sliderSliceW.addEventListener('input', (e) => {
-    const w = parseFloat(e.target.value) || 0;
-    if (dom.checkSliceEnabled && !dom.checkSliceEnabled.checked) {
-      dom.checkSliceEnabled.checked = true;
-    }
-    calabiYau.setManifoldParameters({ sliceEnabled: true, sliceW: w });
-    syncManifoldSlidersToCanvas();
-  });
+function selectSpace(id) {
+  current = getSpace(id);
+  params = { ...defaultParams(current), ...(paramMemory[current.id] || {}) };
+  for (const btn of dom.spaceList.querySelectorAll('.space-btn')) btn.classList.toggle('active', btn.dataset.id === current.id);
+
+  dom.projection.value = current.projection;
+  dom.autoSpin.checked = current.autoSpin;
+  viewer.setAutoSpin(current.autoSpin, Number(dom.spinSpeed.value));
+  setRotation(current.initialAngles || {});
+  dom.sliceOn.checked = false;
+  dom.sliceOnly.checked = false;
+  viewer.setSlice({ enabled: false, only: false, level: 0 });
+  dom.sliceLevel.value = 0;
+  dom.valSlice.textContent = '0.00';
+  dom.sliceReadout.textContent = '';
+
+  renderParamControls();
+  rebuild();
+  persist();
+  if (location.hash.slice(1) !== current.id) history.replaceState(null, '', `#${current.id}`);
 }
 
-dom.sliderExponent.addEventListener('input', (e) => {
-  const n = parseInt(e.target.value, 10);
-  calabiYau.setManifoldParameters({ exponentN: n });
-  syncManifoldSlidersToCanvas();
-});
+function renderNotes() {
+  const n = current.notes;
+  dom.badge.textContent = current.badge(params);
+  dom.notesTitle.textContent = current.title;
+  dom.notesDim.textContent = `${current.group} · drawn from ${geometry.dim} dimensions · ${geometry.points.length.toLocaleString()} points, ${geometry.edges.length.toLocaleString()} edges`;
+  dom.notesWhat.textContent = n.what;
+  dom.notesHow.textContent = n.how;
+  dom.notesTry.innerHTML = '';
+  for (const t of n.tryThis) {
+    const li = document.createElement('li');
+    li.textContent = t;
+    dom.notesTry.appendChild(li);
+  }
+  dom.notesFacts.innerHTML = '';
+  for (const [k, v] of current.facts(params, geometry)) {
+    const dt = document.createElement('dt');
+    dt.textContent = k;
+    const dd = document.createElement('dd');
+    dd.textContent = v;
+    dom.notesFacts.append(dt, dd);
+  }
+}
 
-dom.sliderPhase.addEventListener('input', (e) => {
-  const xi = parseFloat(e.target.value);
-  calabiYau.setManifoldParameters({ projectionAngle: xi });
-  syncManifoldSlidersToCanvas();
-});
+// ---------------------------------------------------------------------------
+// Snapshot, notes toggle, window chrome
+// ---------------------------------------------------------------------------
 
-dom.sliderResolution.addEventListener('input', (e) => {
-  const res = parseInt(e.target.value, 10);
-  calabiYau.setManifoldParameters({ resolution: res });
-  syncManifoldSlidersToCanvas();
-});
-
-if (dom.graphicsProfileSelect) {
-  dom.graphicsProfileSelect.addEventListener('change', (e) => {
-    const modeOrTier = e.target.value || 'auto';
+$('btn-snapshot').addEventListener('click', async () => {
+  const dataUrl = viewer.snapshot();
+  const name = `${current.id}-${new Date().toISOString().replace(/[:.]/g, '-')}.png`;
+  if (isTauri) {
     try {
-      localStorage.setItem(GRAPHICS_STORAGE_KEY, modeOrTier);
-    } catch {
-      // Ignore storage errors
-    }
-    calabiYau.setGraphicsTier(modeOrTier);
-    syncManifoldSlidersToCanvas();
-  });
-}
-
-dom.btnToggleLayout.addEventListener('click', () => {
-  dom.workspaceGrid.classList.toggle('canvas-expanded');
-  setTimeout(() => calabiYau.onResize(), 260);
-});
-
-dom.btnPulseTest.addEventListener('click', () => {
-  const syntheticMetric = 1.45 + Math.random() * 1.65;
-  calabiYau.triggerQuantumPulse(syntheticMetric, 'Ψ_impulse');
-});
-
-if (isTauriDesktop) {
-  dom.winMinimize.addEventListener('click', () => appWindow.minimize());
-  dom.winMaximize.addEventListener('click', () => appWindow.toggleMaximize());
-  dom.winClose.addEventListener('click', () => appWindow.close());
-} else {
-  dom.winMinimize.addEventListener('click', () => {
-    dom.workspaceGrid.classList.add('canvas-expanded');
-    setTimeout(() => calabiYau.onResize(), 260);
-  });
-  dom.winMaximize.addEventListener('click', () => {
-    if (!document.fullscreenElement) {
-      document.documentElement.requestFullscreen?.();
-    } else {
-      document.exitFullscreen?.();
-    }
-  });
-  dom.winClose.addEventListener('click', () => {
-    calabiYau.triggerQuantumPulse(2.5, 'reset');
-  });
-}
-
-// ============================================================================
-// AUTONOMOUS MULTI-FILE APPLICATION BUILDER & GUARDED PC HARNESS
-// ============================================================================
-
-const LOCAL_BUILDS_HISTORY_KEY = 'calabi_yau_multifile_builds_v2';
-let currentSandboxTitle = 'quantum-telemetry-workbench';
-let activeCompiledProject = null;
-let activeSelectedFilePath = 'index.html';
-let lastMeaningfulBuildPrompt = 'Build a landing page for the Calabi-Yau AI platform';
-
-function resolveEffectiveBuilderPrompt(rawInput = '') {
-  const trimmed = String(rawInput || '').trim();
-  if (trimmed && !isConversationalFillerPrompt(trimmed)) {
-    lastMeaningfulBuildPrompt = trimmed;
-    return trimmed;
-  }
-  if (activeCompiledProject?.prompt && !isConversationalFillerPrompt(activeCompiledProject.prompt)) {
-    return activeCompiledProject.prompt;
-  }
-  return lastMeaningfulBuildPrompt;
-}
-
-function getSavedBuildHistory() {
-  try {
-    const raw = localStorage.getItem(LOCAL_BUILDS_HISTORY_KEY);
-    const parsed = raw ? JSON.parse(raw) : [];
-    if (!Array.isArray(parsed)) return [];
-    return parsed.filter(
-      (b) =>
-        b &&
-        !isConversationalFillerPrompt(b.prompt || '') &&
-        !/^okay(?:-|$)/i.test(String(b.slug || ''))
-    );
-  } catch {
-    return [];
-  }
-}
-
-function saveBuildToHistory(projectRecord) {
-  try {
-    if (isConversationalFillerPrompt(projectRecord?.prompt || '')) return;
-    const history = getSavedBuildHistory().filter((b) => b.slug !== projectRecord.slug);
-    history.unshift({
-      slug: projectRecord.slug,
-      title: projectRecord.title,
-      prompt: projectRecord.prompt,
-      templateId: projectRecord.templateId || projectRecord.template,
-      templateLabel: projectRecord.templateLabel || projectRecord.template,
-      entryFile: projectRecord.entryFile || 'index.html',
-      directory: projectRecord.directory || `~/CalabiYauProjects/builds/${projectRecord.slug}`,
-      createdAtMs: projectRecord.createdAtMs || Date.now(),
-      totalBytes: projectRecord.totalBytes || 0,
-      files: projectRecord.files || [],
-      previewHtml: projectRecord.previewHtml || '',
-      novelty: projectRecord.novelty || null,
-    });
-    localStorage.setItem(LOCAL_BUILDS_HISTORY_KEY, JSON.stringify(history.slice(0, 30)));
-  } catch {
-    // Ignore storage quota issues
-  }
-}
-
-/**
- * Wraps raw HTML, JS, or multi-file project code into a runnable HTML document.
- * Crucially, never silently defaults to the old hardcoded Fermat quintic build when a user
- * builds a new application `X`.
- */
-function ensureRunnableHtmlDocument(code, lang = 'html', fallbackPrompt = '') {
-  const trimmed = (code || '').trim();
-  if (/<!doctype html>|<html[\s>]/i.test(trimmed)) {
-    return trimmed;
-  }
-  if (lang === 'javascript' || lang === 'js') {
-    return `<!DOCTYPE html><html><head><meta charset="UTF-8"><style>body{margin:0;background:#050914;color:#0ff;font-family:monospace;padding:16px;}</style></head><body><script type="module">\n${trimmed}\n</script></body></html>`;
-  }
-  if (fallbackPrompt) {
-    const synthesized = compileApplicationProject(fallbackPrompt, {
-      previousBuilds: getSavedBuildHistory(),
-    });
-    return synthesized.previewHtml;
-  }
-  return DEFAULT_EULER_QUINTIC_BUILD_HTML;
-}
-
-function renderProjectFileTabs(project) {
-  if (!dom.projectFilesTabs || !project || !Array.isArray(project.files)) return;
-  dom.projectFilesTabs.innerHTML = '';
-  if (dom.activeBuildSlug) {
-    dom.activeBuildSlug.textContent = project.slug || 'live-build';
-  }
-
-  for (const file of project.files) {
-    const btn = document.createElement('button');
-    btn.type = 'button';
-    const isSelected = file.path === activeSelectedFilePath;
-    btn.className = `mini-link-btn${isSelected ? ' active' : ''}`;
-    btn.style.border = isSelected
-      ? '1px solid #00f3ff'
-      : '1px solid rgba(255,255,255,0.14)';
-    btn.style.padding = '2px 7px';
-    btn.style.borderRadius = '4px';
-    btn.textContent = file.path;
-    btn.addEventListener('click', () => {
-      if (activeCompiledProject) {
-        const prevFile = activeCompiledProject.files.find((f) => f.path === activeSelectedFilePath);
-        if (prevFile) {
-          prevFile.content = dom.launcherSourceEditor.value;
-        }
-      }
-      activeSelectedFilePath = file.path;
-      dom.launcherSourceEditor.value = file.content;
-      renderProjectFileTabs(activeCompiledProject);
-    });
-    dom.projectFilesTabs.appendChild(btn);
-  }
-}
-
-function renderBuildStagesLog(stages = [], novelty = null) {
-  if (!dom.builderStagesLog) return;
-  dom.builderStagesLog.innerHTML = '';
-  if (dom.builderNoveltyBadge && novelty) {
-    dom.builderNoveltyBadge.textContent = novelty.isNovel
-      ? `NOVEL BUILD #${novelty.fingerprint}`
-      : `UPDATED #${novelty.fingerprint}`;
-  }
-  for (const st of stages) {
-    const row = document.createElement('div');
-    row.style.padding = '3px 6px';
-    row.style.borderBottom = '1px solid rgba(255,255,255,0.06)';
-    const color = st.status === 'PASS' ? '#38ef7d' : st.status === 'FAIL' ? '#ff5c7a' : st.status === 'RUN' ? '#00f3ff' : '#ffb84d';
-    const strong = document.createElement('strong');
-    strong.style.color = color;
-    strong.textContent = `[${st.status}] `;
-    const label = document.createElement('span');
-    label.textContent = `${st.label}: `;
-    const detail = document.createElement('span');
-    detail.style.color = '#8ea4c8';
-    detail.style.whiteSpace = 'pre-wrap';
-    detail.textContent = st.detail;
-    row.append(strong, label, detail);
-    dom.builderStagesLog.appendChild(row);
-  }
-}
-
-function loadCompiledProjectIntoStudio(project) {
-  activeCompiledProject = project;
-  currentSandboxTitle = project.slug;
-  activeSelectedFilePath = project.entryFile || project.files?.[0]?.path || 'index.html';
-
-  const entryFileObj =
-    project.files?.find((f) => f.path === activeSelectedFilePath) || project.files?.[0];
-  dom.launcherSourceEditor.value = entryFileObj ? entryFileObj.content : project.previewHtml || '';
-
-  const runnableHtml =
-    project.previewHtml ||
-    (entryFileObj && /\.html?$/i.test(entryFileObj.path)
-      ? entryFileObj.content
-      : ensureRunnableHtmlDocument(entryFileObj?.content || '', 'html', project.prompt));
-
-  dom.sandboxIframe.srcdoc = runnableHtml;
-  dom.launcherTitle.textContent = `APP BUILDER // ${project.title.toUpperCase()} (${project.templateId.toUpperCase()})`;
-  dom.launcherStatusPill.textContent = project.directory || `~/CalabiYauProjects/builds/${project.slug}`;
-  if (dom.pcCommandInput && project.verifyCommand) {
-    dom.pcCommandInput.value = project.verifyCommand;
-  }
-
-  renderProjectFileTabs(project);
-  if (project.stages) {
-    renderBuildStagesLog(project.stages, project.novelty);
-  }
-}
-
-function runCodeInSandbox(rawCode, title = 'custom-live-build', fallbackPrompt = '') {
-  currentSandboxTitle = title;
-  const runnableHtml = ensureRunnableHtmlDocument(rawCode, 'html', fallbackPrompt);
-  dom.launcherSourceEditor.value = runnableHtml;
-  dom.sandboxIframe.srcdoc = runnableHtml;
-  dom.launcherTitle.textContent = `LIVE BUILD // ${title.toUpperCase()}`;
-}
-
-const buildCollectors = new Map();
-
-/** Runs one full (non-chat) completion against the selected provider and returns its text. */
-/** When set, harness model calls use this chat lane instead of the toolbar selection. */
-let harnessLane = null;
-
-function harnessTarget() {
-  if (harnessLane) return harnessLane;
-  const provider = getActiveProvider();
-  return {
-    provider,
-    model: getSelectedModelSlug(),
-    apiKey: dom.apiKeyInput.value.trim() || loadProviderConfig(provider.id).apiKey || '',
-    endpoint: dom.endpointInput.value.trim() || loadProviderConfig(provider.id).endpoint || '',
-    instrumentRunId: null,
-  };
-}
-
-async function completeWithActiveModel(system, user, onToken = () => {}, { shouldStop } = {}) {
-  const { provider, model, apiKey, endpoint, instrumentRunId } = harnessTarget();
-  const runId = `build-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-  let text = '';
-  let stopped = false;
-  const t0 = performance.now();
-  const controller = new AbortController();
-  buildCollectors.set(runId, {
-    onToken(tok, thinking) {
-      if (instrumentRunId) instrumentConsole.pushToken(instrumentRunId, { token: tok, thinking, tMs: performance.now() - t0 });
-      if (thinking || stopped) return;
-      text += tok;
-      onToken(text.length);
-      if (shouldStop && shouldStop(text)) {
-        stopped = true;
-        if (isTauriDesktop) invoke('cancel_generation', { runId }).catch(() => {});
-        else controller.abort();
-      }
-    },
-  });
-  const sampling = { temperature: 0.4, maxTokens: 32000 };
-  try {
-    if (isTauriDesktop) {
-      const full = await invoke('generate_calabi_yau_response', {
-        prompt: user,
-        provider: provider.id,
-        model,
-        apiKey: apiKey || null,
-        endpoint: endpoint || null,
-        runId,
-        sampling,
-        systemPrompt: system,
-      });
-      return !stopped && typeof full === 'string' && full.length >= text.length ? full : text;
-    }
-    await runBrowserStream(runId, user, provider, { model, apiKey, endpoint, signal: controller.signal }, sampling, null, system);
-    return text;
-  } catch (err) {
-    if (stopped) return text;
-    throw err;
-  } finally {
-    buildCollectors.delete(runId);
-  }
-}
-
-/**
- * Loads the preview in an invisible sandboxed iframe and reports uncaught errors, failed
- * promise rejections, console.error calls, and a blank body.
- */
-function probePreviewRuntime(html, waitMs = 3500) {
-  return new Promise((resolve) => {
-    const token = `probe-${Math.random().toString(36).slice(2)}`;
-    const capture = `<script>(function(){var T=${JSON.stringify(token)};function s(m){try{parent.postMessage({__probe:T,msg:String(m).slice(0,400)},'*')}catch(e){}}
-window.addEventListener('error',function(e){if(e.message)s('Uncaught '+e.message+(e.lineno?' (line '+e.lineno+')':''));else if(e.target&&e.target.src)s('Failed to load resource '+e.target.src)},true);
-window.addEventListener('unhandledrejection',function(e){s('Unhandled promise rejection: '+(e.reason&&e.reason.message||e.reason))});
-var ce=console.error;console.error=function(){s('console.error: '+Array.prototype.join.call(arguments,' '));return ce.apply(console,arguments)};
-window.addEventListener('load',function(){setTimeout(function(){var b=document.body;var t=b?(b.innerText||'').trim().length:0;var v=b?b.querySelectorAll('canvas,svg,img,video,button,input').length:0;if(t<20&&v===0)s('Page renders blank (no visible text or elements after load)');parent.postMessage({__probe:T,done:true},'*')},1200)})})();<\/script>`;
-    const instrumented = /<head[^>]*>/i.test(html)
-      ? html.replace(/<head[^>]*>/i, (m) => `${m}${capture}`)
-      : `${capture}${html}`;
-    const errors = [];
-    const frame = document.createElement('iframe');
-    frame.setAttribute('sandbox', 'allow-scripts');
-    frame.style.cssText = 'position:fixed;left:-10000px;top:0;width:1280px;height:800px;opacity:0;pointer-events:none;';
-    let finished = false;
-    const finish = () => {
-      if (finished) return;
-      finished = true;
-      window.removeEventListener('message', onMsg);
-      frame.remove();
-      resolve([...new Set(errors)].slice(0, 12));
-    };
-    const onMsg = (e) => {
-      if (!e.data || e.data.__probe !== token) return;
-      if (e.data.msg) errors.push(`Runtime (browser preview): ${e.data.msg}`);
-      if (e.data.done) setTimeout(finish, 300);
-    };
-    window.addEventListener('message', onMsg);
-    document.body.appendChild(frame);
-    frame.srcdoc = instrumented;
-    setTimeout(finish, waitMs + 1500);
-  });
-}
-
-const MODEL_STRATEGY_KEY = 'calabi_model_build_strategy_v1';
-
-/** Remembers which models need plan-then-write so later builds skip the wasted one-shot attempt. */
-function loadModelStrategies() {
-  try {
-    return JSON.parse(localStorage.getItem(MODEL_STRATEGY_KEY) || '{}');
-  } catch {
-    return {};
-  }
-}
-
-function saveModelStrategy(key, mode) {
-  try {
-    localStorage.setItem(MODEL_STRATEGY_KEY, JSON.stringify({ ...loadModelStrategies(), [key]: mode }));
-  } catch {
-    // Storage full: the harness re-detects next time.
-  }
-}
-
-function canUseLiveModel() {
-  const { provider, apiKey } = harnessTarget();
-  return Boolean(apiKey) || provider.id === 'ollama-local' || /localhost|127\.0\.0\.1/.test(provider.defaultEndpoint || '') || isTauriDesktop;
-}
-
-async function runHarnessForPrompt(effectivePrompt, templateOverride, previousBuilds, guardrailMode, onStages) {
-  const intent = analyzeBuildIntent(effectivePrompt, templateOverride, previousBuilds.map((b) => b.slug));
-  const stages = [];
-  let live = null;
-  const push = (entry) => {
-    stages.push({ ...entry, timestampMs: Date.now() });
-    onStages(stages);
-  };
-  const setLive = (label, detail) => {
-    if (live) stages.splice(stages.indexOf(live), 1);
-    live = label ? { id: 'live', label, status: 'RUN', detail, timestampMs: Date.now() } : null;
-    if (live) stages.push(live);
-    onStages(stages);
-  };
-  const modelName = `${harnessTarget().provider.badge} // ${harnessTarget().model}`;
-  const modelKey = `${harnessTarget().provider.id}/${harnessTarget().model}`;
-
-  const runtimeCheck = async (files) => {
-    const entry = files.find((f) => f.path === intent.template.entryFile) || files.find((f) => /\.html?$/i.test(f.path));
-    const problems = entry ? await probePreviewRuntime(bundlePreviewHtml(entry.content, files, intent)) : [];
-    if (problems.length || !isTauriDesktop || guardrailMode === 'dry-run') return problems;
-    const pkg = files.find((f) => f.path === 'package.json');
-    const testCmd = pkg && /"test"\s*:/.test(pkg.content) ? 'npm test' : null;
-    if (!testCmd) return problems;
-    try {
-      await invoke('write_build_project', {
-        slug: intent.slug,
-        title: intent.title,
-        template: intent.templateId,
-        prompt: effectivePrompt,
-        entryFile: entry?.path || intent.template.entryFile,
-        files,
-        guardrailMode,
-      });
-      const res = await invoke('execute_guarded_command', { command: testCmd, cwd: intent.slug, guardrailMode });
-      if (res.exitCode !== 0) {
-        return [`"${testCmd}" failed with exit code ${res.exitCode}:\n${`${res.stdout}\n${res.stderr}`.trim().slice(-2500)}`];
-      }
+      const path = await invoke('save_snapshot', { name, dataUrl });
+      toast(`Saved ${path}`);
     } catch (err) {
-      push({ id: 'toolchain', label: 'Toolchain check', status: 'WARN', detail: String(err?.message || err) });
+      toast(`Snapshot failed: ${err}`);
     }
-    return problems;
-  };
-
-  const result = await runLlmBuildHarness({
-    prompt: effectivePrompt,
-    intent,
-    complete: (system, user, hooks) =>
-      completeWithActiveModel(
-        system,
-        user,
-        (chars) => {
-          if (live) {
-            live.detail = `${modelName} streaming… ${chars.toLocaleString()} chars`;
-            onStages(stages);
-          }
-        },
-        hooks
-      ),
-    runtimeCheck,
-    maxRepairs: 3,
-    strategy: loadModelStrategies()[modelKey] === 'per-file' ? 'per-file' : 'auto',
-    onStrategyLearned: (mode) => saveModelStrategy(modelKey, mode),
-    onProgress({ phase, attempt, problems, path: filePath }) {
-      if (phase === 'generate') setLive('Generating project', `${modelName} writing every file for "${effectivePrompt}"`);
-      else if (phase === 'runtime') setLive('Running checks', 'Loading the app in a headless preview and running its tests');
-      else if (phase === 'fallback') push({ id: 'fallback', label: 'One-shot output unusable', status: 'WARN', detail: `${modelName} overran its output limit; switching to plan-then-write (one call per file)` });
-      else if (phase === 'plan') setLive('Planning', `${modelName} writing the file manifest and shared contract`);
-      else if (phase === 'file') setLive(`Writing ${filePath}`, `${modelName} writing ${filePath}`);
-      else if (phase === 'fallback') push({ id: 'fallback', label: 'One-shot output unusable', status: 'WARN', detail: `${modelName} overran its output limit; switching to plan-then-write (one call per file)` });
-      else if (phase === 'plan') setLive('Planning', `${modelName} writing the file manifest and shared contract`);
-      else if (phase === 'file') setLive(`Writing ${filePath}`, `${modelName} writing ${filePath}`);
-      else if (phase === 'fallback') push({ id: 'fallback', label: 'One-shot output unusable', status: 'WARN', detail: `${modelName} overran its output limit; switching to plan-then-write (one call per file)` });
-      else if (phase === 'plan') setLive('Planning', `${modelName} writing the file manifest and shared contract`);
-      else if (phase === 'file') setLive(`Writing ${filePath}`, `${modelName} writing ${filePath}`);
-      else if (phase === 'fallback') push({ id: 'fallback', label: 'One-shot output unusable', status: 'WARN', detail: `${modelName} overran its output limit; switching to plan-then-write (one call per file)` });
-      else if (phase === 'plan') setLive('Planning', `${modelName} writing the file manifest and shared contract`);
-      else if (phase === 'file') setLive(`Writing ${filePath}`, `${modelName} writing ${filePath}`);
-      else if (phase === 'continue') setLive(`Continuing output (${attempt})`, `${modelName} hit its length limit; asking it to continue where it stopped`);
-      else if (phase === 'repair') setLive(`Repair pass ${attempt}`, `Sending ${problems.length} problem(s) back to ${modelName}`);
-      else if (phase === 'checked') {
-        setLive(null);
-        push({
-          id: `check-${attempt}`,
-          label: attempt === 0 ? 'Checks on first draft' : `Checks after repair ${attempt}`,
-          status: problems.length ? 'WARN' : 'PASS',
-          detail: problems.length ? problems.join('\n') : 'Structure, syntax, browser runtime and tests all clean',
-        });
-      }
-    },
-  });
-  setLive(null);
-  if (!result.passed) {
-    push({
-      id: 'harness-result',
-      label: 'Harness result',
-      status: 'FAIL',
-      detail: `Still ${result.problems.length} unresolved problem(s) after ${result.attempts.length - 1} repair pass(es). Files are saved so you can inspect them.`,
-    });
+    return;
   }
-  return { intent, files: result.files, stages };
-}
-
-async function executeAutonomousBuildFromPrompt(promptText, templateOverride = 'auto', llmResponseText = '') {
-  const effectivePrompt = resolveEffectiveBuilderPrompt(promptText);
-  if (dom.builderPromptInput && isConversationalFillerPrompt(dom.builderPromptInput.value)) {
-    dom.builderPromptInput.value = effectivePrompt;
-  }
-  const guardrailMode = dom.builderGuardrailSelect?.value || 'workspace-guarded';
-  const previousBuilds = getSavedBuildHistory();
-
-  let harness = null;
-  let priorStages = [];
-  if (!llmResponseText && canUseLiveModel()) {
-    if (dom.btnBuilderSynthesize) dom.btnBuilderSynthesize.disabled = true;
-    try {
-      harness = await runHarnessForPrompt(effectivePrompt, templateOverride, previousBuilds, guardrailMode, (s) =>
-        renderBuildStagesLog(s)
-      );
-      priorStages = harness.stages;
-    } catch (err) {
-      priorStages = [
-        {
-          id: 'llm-error',
-          label: 'Model call failed',
-          status: 'FAIL',
-          detail: `${harnessTarget().provider.badge} // ${harnessTarget().model}: ${err?.message || err}. Set the API key / endpoint, then rebuild. Showing offline template instead.`,
-          timestampMs: Date.now(),
-        },
-      ];
-      renderBuildStagesLog(priorStages);
-    } finally {
-      if (dom.btnBuilderSynthesize) dom.btnBuilderSynthesize.disabled = false;
-    }
-  }
-
-  const builtProject = await runAutonomousBuildLoop({
-    prompt: effectivePrompt,
-    templateId: templateOverride,
-    llmResponseText,
-    llmFiles: harness?.files?.length ? harness.files : null,
-    intent: harness?.intent || null,
-    priorStages,
-    guardrailMode,
-    previousBuilds,
-    tauriInvoke: isTauriDesktop ? invoke : null,
-    onStageUpdate(_stage, allStages) {
-      renderBuildStagesLog(allStages);
-    },
-  });
-
-  saveBuildToHistory(builtProject);
-  loadCompiledProjectIntoStudio(builtProject);
-  await refreshSavedMachineProjects();
-  return builtProject;
-}
-
-function openBuildLauncher(codeToRun = null, title = null, projectObject = null) {
-  dom.buildLauncherModal.classList.remove('hidden');
-  if (projectObject && projectObject.files) {
-    loadCompiledProjectIntoStudio(projectObject);
-  } else if (codeToRun) {
-    runCodeInSandbox(codeToRun, title || `build-${Date.now()}`);
-  } else if (!activeCompiledProject) {
-    const history = getSavedBuildHistory();
-    if (history.length > 0 && history[0].files?.length) {
-      loadCompiledProjectIntoStudio(history[0]);
-    } else {
-      const initialProject = compileApplicationProject(
-        'Build an Electron desktop Quantum Manifold & Higher-Dimensional Telemetry Studio',
-        { templateId: 'electron-desktop' }
-      );
-      loadCompiledProjectIntoStudio(initialProject);
-    }
-  }
-  refreshSavedMachineProjects();
-}
-
-function closeBuildLauncher() {
-  dom.buildLauncherModal.classList.add('hidden');
-}
-
-function getLocalFallbackProjects() {
-  try {
-    const raw = localStorage.getItem(LOCAL_PROJECTS_KEY);
-    return raw ? JSON.parse(raw) : [];
-  } catch {
-    return [];
-  }
-}
-
-function saveLocalFallbackProject(entry) {
-  try {
-    const list = getLocalFallbackProjects().filter((p) => p.filename !== entry.filename);
-    list.unshift(entry);
-    localStorage.setItem(LOCAL_PROJECTS_KEY, JSON.stringify(list.slice(0, 25)));
-  } catch {
-    // Ignore quota issues
-  }
-}
-
-function triggerBrowserDownload(filename, content) {
-  const blob = new Blob([content], { type: 'text/html;charset=utf-8' });
-  const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
-  a.href = url;
-  a.download = filename.endsWith('.html') ? filename : `${filename}.html`;
-  document.body.appendChild(a);
+  a.href = dataUrl;
+  a.download = name;
   a.click();
-  document.body.removeChild(a);
-  setTimeout(() => URL.revokeObjectURL(url), 2000);
-}
-
-/**
- * Saves an artifact or full multi-file project directly to `~/CalabiYauProjects/builds/<slug>`
- * via the Tauri Rust filesystem harness, and stores a copy in local project storage.
- */
-async function saveArtifactToMachine(filename, content, extension = 'html') {
-  const cleanName = filename || `calabi-yau-build-${Date.now()}`;
-  const guardrailMode = dom.builderGuardrailSelect?.value || 'workspace-guarded';
-
-  if (activeCompiledProject && activeCompiledProject.slug === cleanName) {
-    const activeFile = activeCompiledProject.files.find((f) => f.path === activeSelectedFilePath);
-    if (activeFile) activeFile.content = content;
-    saveBuildToHistory(activeCompiledProject);
-
-    if (isTauriDesktop) {
-      const record = await invoke('write_build_project', {
-        slug: activeCompiledProject.slug,
-        title: activeCompiledProject.title,
-        template: activeCompiledProject.templateId,
-        prompt: activeCompiledProject.prompt,
-        entryFile: activeCompiledProject.entryFile,
-        files: activeCompiledProject.files,
-        guardrailMode,
-      });
-      await refreshSavedMachineProjects();
-      return {
-        filename: record.slug,
-        path: record.directory,
-        bytes: record.totalBytes,
-        directory: record.directory,
-      };
-    }
-  }
-
-  if (isTauriDesktop) {
-    const info = await invoke('save_artifact_to_disk', {
-      filename: cleanName,
-      content,
-      extension,
-    });
-    saveLocalFallbackProject({
-      filename: info.filename,
-      path: info.path,
-      bytes: info.bytes,
-      content,
-    });
-    await refreshSavedMachineProjects();
-    return info;
-  } else {
-    const finalName = cleanName.endsWith(`.${extension}`)
-      ? cleanName
-      : `${cleanName}.${extension}`;
-    const virtualPath = `~/CalabiYauProjects/builds/${cleanName}/${finalName}`;
-    const info = {
-      filename: finalName,
-      path: virtualPath,
-      bytes: new Blob([content]).size,
-      directory: `~/CalabiYauProjects/builds/${cleanName}`,
-    };
-    saveLocalFallbackProject({ ...info, content });
-    triggerBrowserDownload(finalName, content);
-    await refreshSavedMachineProjects();
-    return info;
-  }
-}
-
-async function spawnNativeArtifactWindow(title, htmlContent, filename) {
-  if (isTauriDesktop) {
-    const info = await invoke('launch_artifact_window', {
-      title,
-      htmlContent: ensureRunnableHtmlDocument(htmlContent, 'html', title),
-      filename: filename || currentSandboxTitle,
-    });
-    await refreshSavedMachineProjects();
-    return info;
-  } else {
-    openBuildLauncher(htmlContent, title);
-    return {
-      filename: `${filename || 'build'}.html`,
-      path: `~/CalabiYauProjects/builds/${filename || currentSandboxTitle}`,
-      bytes: htmlContent.length,
-    };
-  }
-}
-
-async function refreshSavedMachineProjects() {
-  dom.savedProjectsList.innerHTML = '';
-  let buildRecords = [];
-
-  if (isTauriDesktop) {
-    try {
-      buildRecords = await invoke('list_build_projects');
-    } catch {
-      buildRecords = getSavedBuildHistory();
-    }
-  } else {
-    buildRecords = getSavedBuildHistory();
-  }
-
-  const legacyItems = getLocalFallbackProjects();
-
-  if ((!buildRecords || buildRecords.length === 0) && legacyItems.length === 0) {
-    const empty = document.createElement('div');
-    empty.className = 'saved-project-empty';
-    empty.innerHTML =
-      'No saved builds yet. Describe an application above and click <code>AUTONOMOUS BUILD &amp; VERIFY</code> to scaffold a multi-file project into <code>~/CalabiYauProjects/builds/</code>.';
-    dom.savedProjectsList.appendChild(empty);
-    return;
-  }
-
-  for (const proj of buildRecords) {
-    const card = document.createElement('div');
-    card.className = 'saved-project-item';
-    card.style.cursor = 'pointer';
-
-    const topRow = document.createElement('div');
-    topRow.style.display = 'flex';
-    topRow.style.justifyContent = 'space-between';
-    topRow.style.alignItems = 'center';
-
-    const nameSpan = document.createElement('span');
-    nameSpan.style.color = '#00f3ff';
-    nameSpan.style.fontWeight = '700';
-    nameSpan.textContent = `${proj.title || proj.slug} [${proj.templateId || proj.template || 'app'}]`;
-
-    const sizeSpan = document.createElement('span');
-    sizeSpan.style.color = '#7b96b8';
-    const fileCount = proj.files?.length || proj.fileCount || 1;
-    sizeSpan.textContent = `${fileCount} files · ${((proj.totalBytes || 1024) / 1024).toFixed(1)} KB`;
-
-    topRow.appendChild(nameSpan);
-    topRow.appendChild(sizeSpan);
-
-    const pathDiv = document.createElement('div');
-    pathDiv.className = 'project-path';
-    pathDiv.textContent = proj.directory || `~/CalabiYauProjects/builds/${proj.slug}`;
-
-    card.appendChild(topRow);
-    card.appendChild(pathDiv);
-
-    card.addEventListener('click', () => {
-      if (proj.files && proj.files.length > 0) {
-        const preview =
-          proj.previewHtml ||
-          proj.files.find((f) => f.path === (proj.entryFile || 'index.html'))?.content ||
-          proj.files[0].content;
-        loadCompiledProjectIntoStudio({
-          ...proj,
-          templateId: proj.templateId || proj.template || 'react-vite-app',
-          previewHtml: preview,
-        });
-      }
-    });
-
-    dom.savedProjectsList.appendChild(card);
-  }
-}
-
-dom.btnBuildLauncher.addEventListener('click', () => {
-  openBuildLauncher();
+  toast(`Downloaded ${name}`);
 });
 
-dom.btnLauncherClose.addEventListener('click', closeBuildLauncher);
-
-dom.btnLauncherPreset.addEventListener('click', () => {
-  runCodeInSandbox(DEFAULT_EULER_QUINTIC_BUILD_HTML, 'fermat-quintic-euler-05thz');
-  calabiYau.applyManifoldDirective("Euler's constant xi 0.500 THz over-saturated quintic");
-  syncManifoldSlidersToCanvas();
+$('btn-toggle-notes').addEventListener('click', () => {
+  document.body.classList.toggle('notes-hidden');
 });
 
-function openFrontierWitnessDossier() {
-  const witness = instrumentConsole.getFrontierWitnessSnapshot
-    ? instrumentConsole.getFrontierWitnessSnapshot()
-    : null;
-  const invariants = calabiYau.getActiveInvariants ? calabiYau.getActiveInvariants() : null;
-  const focusInst = instrumentConsole.runs.get(instrumentConsole.focusRunId) || null;
-  const stateVec = focusInst ? focusInst.stateVector() : [];
-  const activeCert =
-    activeCompiledProject?.proofCertificate ||
-    (activeCompiledProject ? mintProofCarryingCertificate({ project: activeCompiledProject }) : null);
-  const provider = getActiveProvider();
-  const model = getSelectedModelSlug();
-  const dossierHtml = generateFrontierWitnessDossierHtml({
-    witness,
-    invariants,
-    stateVector: stateVec,
-    certificate: activeCert,
-    provider: provider.id,
-    model,
-  });
-  dom.buildLauncherModal.classList.remove('hidden');
-  runCodeInSandbox(dossierHtml, 'frontier-ai-witness-dossier');
+if (isTauri) {
+  $('window-controls').classList.remove('hidden');
+  $('win-min').addEventListener('click', () => appWindow.minimize());
+  $('win-max').addEventListener('click', () => appWindow.toggleMaximize());
+  $('win-close').addEventListener('click', () => appWindow.close());
+} else {
+  document.body.classList.add('browser');
 }
 
-if (dom.btnWitnessDossier) {
-  dom.btnWitnessDossier.addEventListener('click', openFrontierWitnessDossier);
-}
-if (dom.btnOpenWitnessDossier) {
-  dom.btnOpenWitnessDossier.addEventListener('click', (e) => {
-    e.preventDefault();
-    e.stopPropagation();
-    openFrontierWitnessDossier();
-  });
-}
-if (dom.btnLauncherWitness) {
-  dom.btnLauncherWitness.addEventListener('click', openFrontierWitnessDossier);
-}
+// ---------------------------------------------------------------------------
+// Ask
+// ---------------------------------------------------------------------------
 
-if (dom.btnBuilderSynthesize) {
-  dom.btnBuilderSynthesize.addEventListener('click', async () => {
-    const promptText = resolveEffectiveBuilderPrompt(dom.builderPromptInput?.value);
-    if (dom.builderPromptInput) dom.builderPromptInput.value = promptText;
-    const tpl = dom.builderTemplateSelect?.value || 'auto';
-    await executeAutonomousBuildFromPrompt(promptText, tpl);
-  });
-}
-
-if (dom.builderPromptInput) {
-  dom.builderPromptInput.addEventListener('keydown', async (e) => {
-    if (e.key === 'Enter') {
-      e.preventDefault();
-      const raw = dom.builderPromptInput.value.trim();
-      if (!raw) return;
-      const promptText = resolveEffectiveBuilderPrompt(raw);
-      dom.builderPromptInput.value = promptText;
-      const tpl = dom.builderTemplateSelect?.value || 'auto';
-      await executeAutonomousBuildFromPrompt(promptText, tpl);
+createAsk({
+  dom: {
+    provider: $('ask-provider'),
+    model: $('ask-model'),
+    customModel: $('ask-custom-model'),
+    key: $('ask-key'),
+    endpoint: $('ask-endpoint'),
+    sync: $('btn-sync-models'),
+    settings: $('ask-settings'),
+    settingsToggle: $('btn-ask-settings'),
+    log: $('ask-log'),
+    form: $('ask-form'),
+    input: $('ask-input'),
+    send: $('ask-send'),
+  },
+  tauri: isTauri ? { invoke, listen } : null,
+  knownIds: SPACES.map((s) => s.id),
+  getContext: () => ({
+    title: current.title,
+    settings: [
+      ...current.params.map((p) => `${p.label} = ${params[p.key]}`),
+      `rotation x↔w ${dom.rot.xw.value}, y↔w ${dom.rot.yw.value}, z↔w ${dom.rot.zw.value}`,
+      `projection ${dom.projection.value}`,
+      dom.sliceOn.checked ? `slice at ${dom.sliceLevel.value}` : 'no slice',
+    ].join('; '),
+    facts: current
+      .facts(params, geometry)
+      .map(([k, v]) => `- ${k}: ${v}`)
+      .join('\n'),
+  }),
+  onToken: () => viewer.pulse(0.06),
+  onShow: (id) => {
+    if (id !== current.id) {
+      selectSpace(id);
+      toast(`Showing ${getSpace(id).title}`);
     }
-  });
-}
-
-if (dom.btnRunPcCmd) {
-  dom.btnRunPcCmd.addEventListener('click', async () => {
-    const cmd = dom.pcCommandInput?.value.trim();
-    if (!cmd || !dom.pcCommandOutput) return;
-    const guardrailMode = dom.builderGuardrailSelect?.value || 'workspace-guarded';
-    const cwd = activeCompiledProject?.slug || '';
-
-    if (isTauriDesktop) {
-      try {
-        dom.pcCommandOutput.textContent = `Running "${cmd}" in ~/CalabiYauProjects/builds/${cwd}...`;
-        const res = await invoke('execute_guarded_command', {
-          command: cmd,
-          cwd,
-          guardrailMode,
-        });
-        dom.pcCommandOutput.textContent = `[Exit ${res.exitCode} · ${res.durationMs}ms] ${
-          res.stdout || res.stderr || 'OK'
-        }`;
-      } catch (err) {
-        dom.pcCommandOutput.textContent = `[GUARDRAIL BLOCKED / ERROR] ${err?.message || err}`;
-      }
-    } else {
-      dom.pcCommandOutput.textContent = `[STANDALONE VERIFIER] Command "${cmd}" validated against ${guardrailMode} policy for ~/CalabiYauProjects/builds/${cwd || 'live-build'}.`;
-    }
-  });
-}
-
-dom.btnRerunSource.addEventListener('click', () => {
-  const edited = dom.launcherSourceEditor.value;
-  if (activeCompiledProject) {
-    const fileObj = activeCompiledProject.files.find((f) => f.path === activeSelectedFilePath);
-    if (fileObj) fileObj.content = edited;
-    const entryPath = activeCompiledProject.entryFile || 'index.html';
-    const entryFile = activeCompiledProject.files.find((f) => f.path === entryPath);
-    if (entryFile) {
-      const bundled = bundlePreviewHtml(
-        entryFile.content,
-        activeCompiledProject.files.map((f) => ({ ...f, fromLlm: true })),
-        activeCompiledProject.intent
-      );
-      activeCompiledProject.previewHtml = bundled;
-      dom.sandboxIframe.srcdoc = bundled;
-      return;
-    }
-  }
-  runCodeInSandbox(edited, currentSandboxTitle);
+  },
 });
 
-dom.btnLauncherSaveDisk.addEventListener('click', async () => {
-  const content = dom.launcherSourceEditor.value.trim() || DEFAULT_EULER_QUINTIC_BUILD_HTML;
-  const info = await saveArtifactToMachine(currentSandboxTitle, content, 'html');
-  dom.launcherStatusPill.textContent = `SAVED: ${info.path}`;
+const spaceFromHash = () => {
+  const id = decodeURIComponent(location.hash.slice(1));
+  return SPACES.some((s) => s.id === id) ? id : null;
+};
+window.addEventListener('hashchange', () => {
+  const id = spaceFromHash();
+  if (id && id !== current?.id) selectSpace(id);
 });
 
-const btnLauncherRunApp = document.getElementById('btn-launcher-run-app');
-if (btnLauncherRunApp) {
-  btnLauncherRunApp.addEventListener('click', async () => {
-    const project = activeCompiledProject;
-    if (!project) return;
-    const out = dom.pcCommandOutput;
-    if (!isTauriDesktop) {
-      if (out) out.textContent = 'Launching on your machine needs the desktop app. In the browser, the preview pane is the running app.';
-      return;
-    }
-    const guardrailMode = dom.builderGuardrailSelect?.value || 'workspace-guarded';
-    btnLauncherRunApp.disabled = true;
-    try {
-      if (out) out.textContent = `Saving and launching ${project.slug} (first launch runs npm install, this can take a minute)...`;
-      await invoke('write_build_project', {
-        slug: project.slug,
-        title: project.title,
-        template: project.templateId,
-        prompt: project.prompt,
-        entryFile: project.entryFile,
-        files: project.files,
-        guardrailMode,
-      });
-      const res = await invoke('launch_build_project', { slug: project.slug, command: null, guardrailMode });
-      if (out) out.textContent = `[LAUNCHED pid ${res.pid}] ${res.command} in ${res.cwd}${res.installedDependencies ? ' (dependencies installed)' : ''}\nLog: ${res.logFile}`;
-      dom.launcherStatusPill.textContent = `RUNNING: ${res.command}`;
-      setTimeout(async () => {
-        try {
-          const log = await invoke('read_launch_log', { slug: project.slug });
-          if (out && log.trim()) out.textContent += `\n--- output ---\n${log.slice(-1500)}`;
-        } catch {
-          // Log is best-effort.
-        }
-      }, 5000);
-    } catch (err) {
-      if (out) out.textContent = `[LAUNCH FAILED] ${err?.message || err}`;
-    } finally {
-      btnLauncherRunApp.disabled = false;
-    }
-  });
-}
-
-dom.btnLauncherNativeWin.addEventListener('click', async () => {
-  const content =
-    activeCompiledProject?.previewHtml ||
-    dom.launcherSourceEditor.value.trim() ||
-    DEFAULT_EULER_QUINTIC_BUILD_HTML;
-  const info = await spawnNativeArtifactWindow(
-    `Calabi-Yau Build // ${currentSandboxTitle}`,
-    content,
-    currentSandboxTitle
-  );
-  dom.launcherStatusPill.textContent = `LAUNCHED: ${info.filename}`;
-});
-
-dom.btnLauncherDownload.addEventListener('click', () => {
-  const content =
-    activeCompiledProject?.previewHtml ||
-    dom.launcherSourceEditor.value.trim() ||
-    DEFAULT_EULER_QUINTIC_BUILD_HTML;
-  triggerBrowserDownload(`${currentSandboxTitle}.html`, content);
-});
-
-dom.btnRefreshProjects.addEventListener('click', refreshSavedMachineProjects);
-
-window.addEventListener('keydown', (e) => {
-  if (e.key === 'Escape' && !dom.buildLauncherModal.classList.contains('hidden')) {
-    closeBuildLauncher();
-  }
-});
-
-/**
- * Attaches an interactive Multi-File Application Build Harness below any assistant message
- * that either contains code blocks OR responds to an application build prompt (`X`).
- * Crucially, derives a unique project slug & multi-file bundle from `promptContext` so it
- * never repeats a previous build.
- */
-async function attachArtifactHarnessIfCodePresent(articleEl, fullText, promptContext = '') {
-  const wantsAppBuild = isApplicationBuildPrompt(promptContext);
-  const codeFenceRegex = /```([a-zA-Z0-9_-]*)\s*\n([\s\S]*?)```/g;
-  const matches = [];
-  let match;
-  while ((match = codeFenceRegex.exec(fullText)) !== null) {
-    const lang = (match[1] || 'html').toLowerCase();
-    const code = match[2].trim();
-    if (code.length > 40) {
-      matches.push({ lang, code });
-    }
-  }
-
-  if (!wantsAppBuild && matches.length === 0) return;
-
-  const builtProject = await executeAutonomousBuildFromPrompt(
-    promptContext || 'Interactive Quantum Application',
-    'auto',
-    fullText
-  );
-
-  const card = document.createElement('div');
-  card.className = 'artifact-harness-card';
-
-  const header = document.createElement('div');
-  header.className = 'artifact-harness-header';
-  header.innerHTML = `<span>MULTI-FILE BUILD // ${builtProject.title.toUpperCase()} (${builtProject.templateId.toUpperCase()} · ${
-    builtProject.files.length
-  } FILES)</span><span>NOVELTY #${builtProject.novelty.fingerprint}</span>`;
-
-  const actions = document.createElement('div');
-  actions.className = 'artifact-harness-actions';
-
-  const statusLine = document.createElement('div');
-  statusLine.className = 'artifact-status-line';
-  statusLine.textContent = `Built ${builtProject.files.map((f) => f.path).join(', ')} in ${builtProject.directory}`;
-
-  const btnLaunch = document.createElement('button');
-  btnLaunch.type = 'button';
-  btnLaunch.className = 'artifact-btn launch';
-  btnLaunch.textContent = `OPEN IN APP BUILDER (${builtProject.files.length} FILES)`;
-  btnLaunch.addEventListener('click', () => {
-    openBuildLauncher(null, builtProject.slug, builtProject);
-    statusLine.textContent = `Opened ${builtProject.title} (${builtProject.slug}) in Multi-File App Builder.`;
-  });
-
-  const btnSaveDisk = document.createElement('button');
-  btnSaveDisk.type = 'button';
-  btnSaveDisk.className = 'artifact-btn';
-  btnSaveDisk.textContent = `SAVE TO ~/CalabiYauProjects/builds/${builtProject.slug}`;
-  btnSaveDisk.addEventListener('click', async () => {
-    const info = await saveArtifactToMachine(builtProject.slug, builtProject.previewHtml, 'html');
-    statusLine.textContent = `Saved multi-file build to ${info.path} (${info.bytes} bytes)`;
-  });
-
-  const btnNativeWin = document.createElement('button');
-  btnNativeWin.type = 'button';
-  btnNativeWin.className = 'artifact-btn';
-  btnNativeWin.textContent = 'SPAWN NATIVE WINDOW';
-  btnNativeWin.addEventListener('click', async () => {
-    const info = await spawnNativeArtifactWindow(
-      `${builtProject.title} (${builtProject.templateLabel})`,
-      builtProject.previewHtml,
-      builtProject.slug
-    );
-    statusLine.textContent = `Spawned native window & saved: ${info.path}`;
-  });
-
-  const btnApplyManifold = document.createElement('button');
-  btnApplyManifold.type = 'button';
-  btnApplyManifold.className = 'artifact-btn manifold';
-  btnApplyManifold.textContent = 'SYNC TO HIGHER-DIMENSIONAL VIEWPORT';
-  btnApplyManifold.addEventListener('click', () => {
-    const summary = calabiYau.applyManifoldDirective(promptContext);
-    syncManifoldSlidersToCanvas();
-    statusLine.textContent = `Synced to ${summary.dimensionSpaceId} (${summary.exponentN}D sheets)`;
-  });
-
-  actions.appendChild(btnLaunch);
-  actions.appendChild(btnSaveDisk);
-  actions.appendChild(btnNativeWin);
-  actions.appendChild(btnApplyManifold);
-
-  card.appendChild(header);
-  card.appendChild(actions);
-  card.appendChild(statusLine);
-  articleEl.appendChild(card);
-
-  dom.chatMessages.scrollTop = dom.chatMessages.scrollHeight;
-}
-
-// ============================================================================
-// CHAT STREAMING, REASONING TRACE SEPARATION & SWARM LANES
-// ============================================================================
-
-let isGenerating = false;
-const laneSessions = new Map();
-
-function createChatBubble(role, initialText = '', badgeText = '', lane = null) {
-  const provider = lane?.provider || getActiveProvider();
-  const modelSlug = lane?.modelSlug || getSelectedModelSlug();
-
-  const article = document.createElement('article');
-  article.className = `msg-bubble ${role}${lane?.color ? ' lane' : ''}`;
-  if (lane?.color) article.style.borderLeftColor = lane.color;
-
-  const meta = document.createElement('div');
-  meta.className = 'msg-meta';
-
-  const roleSpan = document.createElement('span');
-  roleSpan.className = 'msg-role';
-  roleSpan.textContent =
-    role === 'user'
-      ? 'OPERATOR // PROMPT'
-      : role === 'assistant'
-      ? `${provider.badge} // ${modelSlug.toUpperCase()}`
-      : 'SYSTEM // ALERT';
-  if (lane?.color) roleSpan.style.color = lane.color;
-
-  const metricSpan = document.createElement('span');
-  metricSpan.className = 'msg-metric';
-  metricSpan.textContent = badgeText;
-
-  meta.appendChild(roleSpan);
-  meta.appendChild(metricSpan);
-  article.appendChild(meta);
-
-  let thinkingDrawer = null;
-  let thinkingBody = null;
-
-  if (role === 'assistant') {
-    thinkingDrawer = document.createElement('details');
-    thinkingDrawer.className = 'thinking-drawer';
-    thinkingDrawer.style.display = 'none';
-
-    const summary = document.createElement('summary');
-    summary.className = 'thinking-summary';
-    summary.innerHTML =
-      '<span>QUANTUM REASONING TRACE (INTERNAL MODEL THINKING)</span><span>[EXPAND / COLLAPSE]</span>';
-
-    thinkingBody = document.createElement('div');
-    thinkingBody.className = 'thinking-body';
-
-    thinkingDrawer.appendChild(summary);
-    thinkingDrawer.appendChild(thinkingBody);
-    article.appendChild(thinkingDrawer);
-  }
-
-  const content = document.createElement('div');
-  content.className = 'msg-content';
-  content.textContent = initialText;
-
-  article.appendChild(content);
-  dom.chatMessages.appendChild(article);
-  dom.chatMessages.scrollTop = dom.chatMessages.scrollHeight;
-
-  return { article, content, metricSpan, thinkingDrawer, thinkingBody };
-}
-
-/** Routes one streamed token into its lane's chat bubble and the instrument. */
-function handleStreamToken(runId, { token, thinking = false, tMs }) {
-  const collector = buildCollectors.get(runId);
-  if (collector) {
-    if (token) collector.onToken(token, thinking);
-    return;
-  }
-  const session = laneSessions.get(runId);
-  if (!session || !token) return;
-
-  if (thinking && session.thinkingDrawer && session.thinkingBody) {
-    session.thinkingDrawer.style.display = 'block';
-    session.thinkingBody.textContent += token;
-  } else {
-    session.content.textContent += token;
-  }
-
-  const frame = instrumentConsole.pushToken(runId, { token, thinking, tMs });
-  if (frame) {
-    session.metricSpan.textContent = `I=${frame.features.infoRate.toFixed(0)}/s · σ=(${frame.k1},${frame.k2})${
-      session.simulated ? ' [SIM]' : ''
-    }`;
-  }
-  dom.chatMessages.scrollTop = dom.chatMessages.scrollHeight;
-}
-
-if (isTauriDesktop) {
-  listen('inference-frame', (event) => {
-    const p = event.payload || {};
-    handleStreamToken(p.runId, { token: p.token, thinking: Boolean(p.thinking), tMs: Number(p.tMs) });
-  });
-}
-
-/**
- * Extracts a token from any provider JSON chunk in browser-standalone mode,
- * distinguishing internal reasoning (`isThinking: true`) from final output.
- */
-function extractBrowserStreamToken(parsed) {
-  if (typeof parsed.response === 'string' && parsed.response) {
-    return { token: parsed.response, isThinking: false };
-  }
-  if (parsed.message?.content) {
-    return { token: parsed.message.content, isThinking: false };
-  }
-  if (parsed.message?.thinking) {
-    return { token: parsed.message.thinking, isThinking: true };
-  }
-  if (parsed.choices?.[0]?.delta?.content) {
-    return { token: parsed.choices[0].delta.content, isThinking: false };
-  }
-  if (parsed.choices?.[0]?.delta?.reasoning_content) {
-    return { token: parsed.choices[0].delta.reasoning_content, isThinking: true };
-  }
-  if (parsed.delta?.text) {
-    return { token: parsed.delta.text, isThinking: false };
-  }
-  if (parsed.delta?.thinking) {
-    return { token: parsed.delta.thinking, isThinking: true };
-  }
-  if (parsed.candidates?.[0]?.content?.parts?.[0]?.text) {
-    return { token: parsed.candidates[0].content.parts[0].text, isThinking: false };
-  }
-  return { token: '', isThinking: false };
-}
-
-/** Mirrors `stream::build_payload_with_system` in the Rust bridge for browser-standalone mode. */
-function buildBrowserPayload(provider, modelSlug, prompt, sampling, systemPrompt = null) {
-  const temperature = sampling?.temperature ?? 0.7;
-  const penalty = sampling?.repetitionPenalty || 0;
-  if (provider.id === 'google') {
-    const generationConfig = { temperature };
-    if (sampling?.topP != null) generationConfig.topP = sampling.topP;
-    if (sampling?.maxTokens) generationConfig.maxOutputTokens = sampling.maxTokens;
-    const body = { contents: [{ role: 'user', parts: [{ text: prompt }] }], generationConfig };
-    if (systemPrompt) {
-      body.systemInstruction = { parts: [{ text: systemPrompt }] };
-    }
-    return body;
-  }
-  if (provider.id === 'anthropic') {
-    const body = { model: modelSlug, max_tokens: sampling?.maxTokens || 4096, stream: true, messages: [{ role: 'user', content: prompt }] };
-    if (systemPrompt) body.system = systemPrompt;
-    if (sampling?.temperature != null) body.temperature = Math.min(1, sampling.temperature);
-    return body;
-  }
-  const messages = [];
-  if (systemPrompt) messages.push({ role: 'system', content: systemPrompt });
-  messages.push({ role: 'user', content: prompt });
-  if (provider.id === 'ollama-cloud' || provider.id === 'ollama-local') {
-    const options = { temperature, top_p: sampling?.topP ?? 0.9 };
-    if (penalty > 0) options.repeat_penalty = 1 + penalty * 0.5;
-    if (sampling?.maxTokens) {
-      Object.assign(options, { num_ctx: 32768, num_predict: sampling.maxTokens });
-      return { model: modelSlug, messages, stream: true, think: false, options };
-    }
-    return { model: modelSlug, messages, stream: true, options };
-  }
-  const body = { model: modelSlug, messages, stream: true, temperature };
-  if (sampling?.topP != null) body.top_p = sampling.topP;
-  if (penalty > 0) body.frequency_penalty = penalty;
-  return body;
-}
-
-async function runBrowserStream(runId, prompt, provider, lane, sampling, session, systemPrompt = null) {
-  const targetUrl = lane.endpoint || provider.defaultEndpoint;
-  const headers = { 'Content-Type': 'application/json' };
-  if (lane.apiKey) {
-    if (provider.id === 'anthropic') {
-      headers['x-api-key'] = lane.apiKey;
-      headers['anthropic-version'] = '2023-06-01';
-    } else if (provider.id === 'google') {
-      headers['x-goog-api-key'] = lane.apiKey;
-    } else {
-      headers['Authorization'] = `Bearer ${lane.apiKey}`;
-    }
-  }
-
-  const response = await fetch(targetUrl, {
-    method: 'POST',
-    headers,
-    body: JSON.stringify(buildBrowserPayload(provider, lane.model, prompt, sampling, systemPrompt)),
-    signal: lane.signal,
-  });
-  if (!response.ok || !response.body) {
-    throw new Error(`HTTP ${response.status} from ${provider.badge}`);
-  }
-
-  const reader = response.body.getReader();
-  const decoder = new TextDecoder();
-  let buffer = '';
-  while (true) {
-    const { value, done } = await reader.read();
-    if (done) break;
-    buffer += decoder.decode(value, { stream: true });
-
-    let newlineIdx;
-    while ((newlineIdx = buffer.indexOf('\n')) !== -1) {
-      const rawLine = buffer.slice(0, newlineIdx).trim();
-      buffer = buffer.slice(newlineIdx + 1);
-      if (!rawLine || rawLine.startsWith(':') || rawLine.startsWith('event:')) continue;
-      const jsonStr = rawLine.startsWith('data:') ? rawLine.slice(5).trim() : rawLine;
-      if (!jsonStr || jsonStr === '[DONE]') continue;
-
-      let parsed;
-      try {
-        parsed = JSON.parse(jsonStr);
-      } catch {
-        continue;
-      }
-      const { token, isThinking } = extractBrowserStreamToken(parsed);
-      if (token) {
-        handleStreamToken(runId, { token, thinking: isThinking, tMs: performance.now() - session.t0 });
-      }
-    }
-  }
-}
-
-function seededRandom(seedText) {
-  let h = 2166136261;
-  for (let i = 0; i < seedText.length; i++) {
-    h ^= seedText.charCodeAt(i);
-    h = Math.imul(h, 16777619) >>> 0;
-  }
-  return () => {
-    h = (Math.imul(h, 1664525) + 1013904223) >>> 0;
-    return h / 4294967296;
-  };
-}
-
-/**
- * Simulated stream with a deterministic per-model timing profile (base interval, jitter, burst
- * period) and an optional reasoning phase, so swarm lanes and fingerprints differ even offline.
- * Simulated runs are labelled `[sim]` so they never masquerade as real model fingerprints.
- */
-async function runSimulatedStream(runId, promptText, provider, modelSlug, session) {
-  const rand = seededRandom(`${provider.id}/${modelSlug}/${promptText}`);
-  const baseMs = 12 + rand() * 38;
-  const jitter = 0.1 + rand() * 0.8;
-  const period = 12 + Math.floor(rand() * 40);
-  const reasons = /reason|think|deepseek|r1|opus|kimi|qwen|sonar-reasoning/i.test(modelSlug);
-
-  const wantsExplicitEulerPreset = /fermat quintic|0\.500\s*thz|euler's constant/i.test(promptText);
-  const wantsAppBuild = isApplicationBuildPrompt(promptText);
-
-  let answer;
-  if (wantsExplicitEulerPreset) {
-    answer = `[${provider.badge} :: ${modelSlug}] Locking Fermat quintic threefold M₅ ⊂ ℂℙ⁴ (∑ zᵢ⁵ = 0) to Euler's constant ξ = e ≈ 2.71828 rad with a 0.500 THz Simplex Noise burst envelope. Below is the executable Three.js / GLSL holographic wireframe build:\n\n\`\`\`html\n${DEFAULT_EULER_QUINTIC_BUILD_HTML}\n\`\`\``;
-  } else if (wantsAppBuild) {
-    const compiled = compileApplicationProject(promptText, {
-      previousBuilds: getSavedBuildHistory(),
-    });
-    const fileSummary = compiled.files.map((f) => `• ${f.path} (${f.content.length} B)`).join('\n');
-    const serializedFilesBlock = compiled.files
-      .map((f) => `// === FILE: ${f.path} ===\n${f.content}`)
-      .join('\n\n');
-    answer = `[${provider.badge} :: ${modelSlug}] Autonomous Multi-File Application Architect synthesized "${compiled.title}" (${compiled.templateLabel}) into ~/CalabiYauProjects/builds/${compiled.slug}/ (Novelty Fingerprint #${compiled.novelty.fingerprint}):\n${fileSummary}\n\n${serializedFilesBlock}`;
-  } else {
-    answer = `[${provider.badge} :: ${modelSlug}] Simulated response to "${promptText.slice(0, 64)}". The instrument treats this stream as a signal: log inter-token interval and novelty-weighted information density are each run through a 32-token Hann-windowed spectral transform, split into n bands, and their outer product sets the energy of the n² sheets of z₁ⁿ + z₂ⁿ = 1. Entropy and timing place the trajectory head on the surface, the dominant timing × content mode selects its sheet, and the finished run is stored as a fingerprint you can compare against other models.`;
-  }
-
-  const reasoning = reasons
-    ? `Analyzing request "${promptText.slice(0, 56)}": selecting architecture template, verifying novelty against prior builds in ~/CalabiYauProjects/builds/, and mapping higher-dimensional invariants. `
-    : '';
-
-  const chunkedMode = wantsExplicitEulerPreset || wantsAppBuild;
-  const tokenize = (text, chunk) => (chunk ? text.match(/[\s\S]{1,28}/g) : text.match(/\s*\S+/g)) || [text];
-  const steps = [
-    ...tokenize(reasoning, false).filter(Boolean).map((t) => ({ t, thinking: true })),
-    ...tokenize(answer, chunkedMode).map((t) => ({ t, thinking: false })),
-  ];
-
-  await new Promise((resolve) => setTimeout(resolve, 80 + rand() * 220));
-  for (let i = 0; i < steps.length; i++) {
-    const wave = 1 + 0.6 * Math.sin((2 * Math.PI * i) / period);
-    const noise = 1 + jitter * (rand() - 0.5) * 2;
-    const phaseFactor = steps[i].thinking ? 1.4 : 1;
-    const delayMs = chunkedMode && !steps[i].thinking ? 4 + rand() * 3 : baseMs * wave * noise * phaseFactor;
-    await new Promise((resolve) => setTimeout(resolve, Math.max(2, delayMs)));
-    handleStreamToken(runId, {
-      token: steps[i].t,
-      thinking: steps[i].thinking,
-      tMs: performance.now() - session.t0,
-    });
-  }
-}
-
-// ---------------------------------------------------------------------------------------------
-// Swarm lanes
-// ---------------------------------------------------------------------------------------------
-
-const SWARM_STORAGE_KEY = 'calabi_yau_swarm_lanes_v1';
-let swarmLanes = loadSwarmLanes();
-
-function loadSwarmLanes() {
-  try {
-    const raw = localStorage.getItem(SWARM_STORAGE_KEY);
-    const parsed = raw ? JSON.parse(raw) : [];
-    return Array.isArray(parsed) ? parsed.slice(0, LANE_COLORS.length) : [];
-  } catch {
-    return [];
-  }
-}
-
-function persistSwarmLanes() {
-  try {
-    localStorage.setItem(SWARM_STORAGE_KEY, JSON.stringify(swarmLanes));
-  } catch {
-    // Ignore quota errors.
-  }
-}
-
-function renderSwarmLanes() {
-  dom.swarmCount.textContent = `(${swarmLanes.length})`;
-  dom.btnToggleSwarm.classList.toggle('accent', swarmLanes.length >= 2);
-  dom.swarmLaneList.innerHTML = '';
-  if (!swarmLanes.length) {
-    const empty = document.createElement('div');
-    empty.className = 'regime-empty';
-    empty.textContent = 'No lanes. With fewer than 2 lanes, TRANSMIT uses the selected provider/model only.';
-    dom.swarmLaneList.appendChild(empty);
-    return;
-  }
-  swarmLanes.forEach((lane, idx) => {
-    const provider = AI_PROVIDERS.find((p) => p.id === lane.providerId);
-    const row = document.createElement('div');
-    row.className = 'swarm-lane';
-    const dot = document.createElement('span');
-    dot.className = 'swarm-lane-dot';
-    dot.style.background = lane.color;
-    const label = document.createElement('span');
-    label.textContent = `${provider?.badge || lane.providerId} // ${lane.model}`;
-    const remove = document.createElement('button');
-    remove.type = 'button';
-    remove.className = 'mini-link-btn';
-    remove.textContent = 'REMOVE';
-    remove.addEventListener('click', () => {
-      swarmLanes.splice(idx, 1);
-      persistSwarmLanes();
-      renderSwarmLanes();
-    });
-    row.append(dot, label, remove);
-    dom.swarmLaneList.appendChild(row);
-  });
-}
-
-dom.btnToggleSwarm.addEventListener('click', () => {
-  dom.swarmDrawer.classList.toggle('hidden');
-  dom.btnToggleSwarm.classList.toggle('active');
-});
-
-dom.btnAddLane.addEventListener('click', () => {
-  if (swarmLanes.length >= LANE_COLORS.length) return;
-  const provider = getActiveProvider();
-  const model = getSelectedModelSlug();
-  if (swarmLanes.some((l) => l.providerId === provider.id && l.model === model)) return;
-  const used = new Set(swarmLanes.map((l) => l.color));
-  const color = LANE_COLORS.find((c) => !used.has(c)) || LANE_COLORS[0];
-  swarmLanes.push({ providerId: provider.id, model, color });
-  persistSwarmLanes();
-  renderSwarmLanes();
-});
-
-renderSwarmLanes();
-
-function renderSamplingReadout() {
-  const params = instrumentConsole.samplingParams();
-  dom.samplingReadout.textContent = params
-    ? `sampling: T=${params.temperature.toFixed(2)} top_p=${params.topP.toFixed(2)} pen=${params.repetitionPenalty.toFixed(2)}`
-    : 'sampling: provider defaults';
-}
-
-for (const ev of ['change', 'input']) {
-  dom.controlMode.addEventListener(ev, renderSamplingReadout);
-  dom.controlAmplitude.addEventListener(ev, renderSamplingReadout);
-}
-dom.sheetHeatmap.addEventListener('click', renderSamplingReadout);
-renderSamplingReadout();
-
-/** Applies the control surface's routing decision to the provider/model selectors. */
-function applyAutoRoute() {
-  if (!instrumentConsole.control.autoRoute) return null;
-  const route = instrumentConsole.routeSuggestion();
-  if (!route) return null;
-  const provider = AI_PROVIDERS.find((p) => p.id === route.provider);
-  if (!provider) return null;
-  if (dom.providerSelect.value !== provider.id) {
-    dom.providerSelect.value = provider.id;
-    populateModelsForProvider(provider);
-  }
-  if (![...dom.modelSelect.options].some((o) => o.value === route.model)) {
-    const opt = document.createElement('option');
-    opt.value = route.model;
-    opt.textContent = `${route.model} [Routed]`;
-    dom.modelSelect.prepend(opt);
-  }
-  dom.modelSelect.value = route.model;
-  dom.customModelInput.value = '';
-  dom.activeProviderBanner.textContent = `${provider.badge} // ${route.model.toUpperCase()} [ROUTED]`;
-  return route;
-}
-
-async function runLane(lane, prompt, forceSimulation, sampling) {
-  const provider = AI_PROVIDERS.find((p) => p.id === lane.providerId) || AI_PROVIDERS[0];
-  const bubble = createChatBubble('assistant', '', 'STREAMING...', {
-    provider,
-    modelSlug: lane.model,
-    color: lane.multi ? lane.color : null,
-  });
-  bubble.content.classList.add('streaming-cursor');
-
-  const beginRun = (simulated) => {
-    const model = simulated ? `${lane.model} [sim]` : lane.model;
-    const runId = instrumentConsole.startRun({ provider: provider.id, model, label: model, color: lane.color });
-    laneSessions.set(runId, { ...bubble, t0: performance.now(), simulated });
-    return runId;
-  };
-
-  let runId = beginRun(forceSimulation);
-
-  if (!forceSimulation && isApplicationBuildPrompt(prompt) && !lane.multi) {
-    bubble.content.textContent = `Building "${prompt}" with ${provider.badge} // ${lane.model}. The model writes every file, then the harness checks, runs and repairs it. Live progress is in the App Builder.`;
-    openBuildLauncher();
-    harnessLane = {
-      provider,
-      model: lane.model,
-      apiKey: lane.apiKey || loadProviderConfig(provider.id).apiKey || '',
-      endpoint: lane.endpoint || loadProviderConfig(provider.id).endpoint || '',
-      instrumentRunId: runId,
-    };
-    try {
-      const project = await executeAutonomousBuildFromPrompt(prompt);
-      const failed = project.stages?.find((s) => s.status === 'FAIL');
-      const summary = document.createElement('div');
-      summary.style.marginTop = '8px';
-      summary.textContent = failed
-        ? `${failed.label}: ${failed.detail}`
-        : `${project.authoredByLlm ? 'Built and verified' : 'Offline template only'}: ${project.title}, ${project.files.length} files in ${project.directory}\n${project.files.map((f) => `• ${f.path}`).join('\n')}\nUse LAUNCH APP ▶ in the App Builder to run it.`;
-      summary.style.whiteSpace = 'pre-wrap';
-      bubble.content.appendChild(summary);
-    } catch (err) {
-      bubble.content.textContent += `\n[BUILD FAILED] ${err?.message || err}`;
-    } finally {
-      harnessLane = null;
-      bubble.content.classList.remove('streaming-cursor');
-      const fp = instrumentConsole.finishRun(runId);
-      if (fp) bubble.metricSpan.textContent = `${fp.tokens} tok · ${fp.stats.tokensPerSec.toFixed(1)}/s · BUILD`;
-      laneSessions.delete(runId);
-    }
-    return;
-  }
-
-  const systemPrompt = isApplicationBuildPrompt(prompt)
-    ? buildMultiFileSystemPrompt(
-        analyzeBuildIntent(
-          prompt,
-          'auto',
-          getSavedBuildHistory().map((b) => b.slug)
-        )
-      )
-    : null;
-
-  try {
-    if (forceSimulation) {
-      await runSimulatedStream(runId, prompt, provider, lane.model, laneSessions.get(runId));
-    } else if (isTauriDesktop) {
-      await invoke('generate_calabi_yau_response', {
-        prompt,
-        provider: provider.id,
-        model: lane.model,
-        apiKey: lane.apiKey || null,
-        endpoint: lane.endpoint || null,
-        runId,
-        sampling,
-        systemPrompt,
-      });
-    } else {
-      await runBrowserStream(runId, prompt, provider, lane, sampling, laneSessions.get(runId), systemPrompt);
-    }
-  } catch (err) {
-    const notice = document.createElement('div');
-    notice.style.color = '#ff85a2';
-    notice.style.fontSize = '11px';
-    notice.style.marginBottom = '6px';
-    notice.textContent = `[${provider.badge} (${lane.model}) notice: ${String(err)} — click "API KEY // ENDPOINT" to set ${
-      provider.envKeyName || 'credentials'
-    }; falling back to the simulator (fingerprint tagged [sim])]`;
-    bubble.content.appendChild(notice);
-
-    instrumentConsole.finishRun(runId);
-    laneSessions.delete(runId);
-    runId = beginRun(true);
-    await runSimulatedStream(runId, prompt, provider, lane.model, laneSessions.get(runId));
-  } finally {
-    bubble.content.classList.remove('streaming-cursor');
-    const fp = instrumentConsole.finishRun(runId);
-    if (fp) {
-      bubble.metricSpan.textContent = `${fp.tokens} tok · ${fp.stats.tokensPerSec.toFixed(1)}/s · FINGERPRINT SAVED`;
-    }
-    laneSessions.delete(runId);
-    attachArtifactHarnessIfCodePresent(bubble.article, bubble.content.textContent, prompt);
-  }
-}
-
-async function handlePromptSubmission(forceSimulation = false) {
-  const prompt = dom.promptInput.value.trim();
-  if (!prompt && !forceSimulation) return;
-  if (isGenerating) return;
-
-  const effectivePrompt =
-    prompt ||
-    `Render a highly unstable, multi-sheeted projection of the Fermat quintic threefold topology. Force the vertex shader to map Euler's constant to the phase angle xi, and scale the continuous Simplex Noise amplitude based on an artificial 0.500 THz inference burst.`;
-  dom.promptInput.value = '';
-
-  if (!isConversationalFillerPrompt(effectivePrompt) && isApplicationBuildPrompt(effectivePrompt)) {
-    lastMeaningfulBuildPrompt = effectivePrompt;
-    if (dom.builderPromptInput) {
-      dom.builderPromptInput.value = effectivePrompt;
-    }
-  }
-
-  if (
-    /euler|quintic|thz|oversaturat|over-saturat|unstable|sheet|tesseract|24-cell|hopf|klein|kaluza|e8|g2|m-theory|hyperplane|slice|4d|5d|7d|8d|11d/i.test(
-      effectivePrompt
-    )
-  ) {
-    calabiYau.applyManifoldDirective(effectivePrompt);
-    syncManifoldSlidersToCanvas();
-  }
-
-  const multi = swarmLanes.length >= 2;
-  if (!multi) applyAutoRoute();
-  const sampling = instrumentConsole.samplingParams();
-  renderSamplingReadout();
-
-  const lanes = multi
-    ? swarmLanes.map((l) => {
-        const cfg = loadProviderConfig(l.providerId);
-        return { ...l, apiKey: cfg.apiKey || '', endpoint: cfg.endpoint || '', multi: true };
-      })
-    : [
-        {
-          providerId: getActiveProvider().id,
-          model: getSelectedModelSlug(),
-          apiKey: dom.apiKeyInput.value.trim(),
-          endpoint: dom.endpointInput.value.trim(),
-          color: LANE_COLORS[0],
-          multi: false,
-        },
-      ];
-
-  isGenerating = true;
-  dom.btnSend.disabled = true;
-  dom.btnSimulate.disabled = true;
-
-  const provider = getActiveProvider();
-  createChatBubble('user', effectivePrompt, multi ? `SWARM // ${lanes.length} LANES` : `${provider.badge} // TX`);
-
-  try {
-    await Promise.all(lanes.map((lane) => runLane(lane, effectivePrompt, forceSimulation, sampling)));
-  } finally {
-    isGenerating = false;
-    dom.btnSend.disabled = false;
-    dom.btnSimulate.disabled = false;
-    dom.metricTps.textContent = '0.0';
-    renderSamplingReadout();
-  }
-}
-
-dom.chatForm.addEventListener('submit', (e) => {
-  e.preventDefault();
-  handlePromptSubmission(false);
-});
-
-dom.btnSimulate.addEventListener('click', () => {
-  handlePromptSubmission(true);
-});
-
-dom.promptInput.addEventListener('keydown', (e) => {
-  if (e.key === 'Enter' && !e.shiftKey) {
-    e.preventDefault();
-    handlePromptSubmission(false);
-  }
-});
+renderSpaceList();
+selectSpace(spaceFromHash() || saved.space || 'calabi-yau');
