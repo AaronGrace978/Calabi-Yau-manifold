@@ -4,6 +4,7 @@ import { appWindow } from '@tauri-apps/api/window';
 import { LabViewer } from './lab/viewer.js';
 import { SPACES, getSpace, defaultParams } from './lab/catalog.js';
 import { createAsk } from './lab/ask.js';
+import { SynesthesiaAudioEngine } from './lab/audio.js';
 
 const isTauri = typeof window !== 'undefined' && Boolean(window.__TAURI_IPC__ || window.__TAURI_METADATA__);
 const $ = (id) => document.getElementById(id);
@@ -14,6 +15,7 @@ const dom = {
   viewport: $('viewport'),
   badge: $('space-badge'),
   sliceReadout: $('slice-readout'),
+  synthReadout: $('synth-readout'),
   toast: $('toast'),
   params: $('param-controls'),
   rotation: $('rotation-controls'),
@@ -28,6 +30,11 @@ const dom = {
   sliceLevel: $('slice-level'),
   valSlice: $('val-slice'),
   sliceOnly: $('slice-only'),
+  btnSynth: $('btn-synth'),
+  synthOn: $('synth-on'),
+  synthPreset: $('synth-preset'),
+  synthVolume: $('synth-volume'),
+  valSynthVol: $('val-synth-vol'),
   notes: $('notes'),
   notesTitle: $('notes-title'),
   notesDim: $('notes-dim'),
@@ -67,13 +74,28 @@ function toast(text, ms = 2600) {
   toast.timer = setTimeout(() => dom.toast.classList.add('hidden'), ms);
 }
 
+const audioEngine = new SynesthesiaAudioEngine();
+
 const viewer = new LabViewer(dom.viewport, {
+  tauri: isTauri ? { invoke, listen } : null,
   onFrame: (v) => {
-    if (!v.slice.enabled || !current?.sliceable) return;
+    if (v.features) {
+      audioEngine.updateFromFeatures(v.features, { sliceEnabled: v.slice.enabled });
+    }
     if ((v.frameTick = (v.frameTick || 0) + 1) % 10) return;
-    dom.sliceReadout.textContent = v.sliceCount
-      ? `slice: ${v.sliceCount} segments where the hidden axis = ${v.slice.level.toFixed(2)}`
-      : 'slice: empty here, move the level toward 0';
+    if (v.slice.enabled && current?.sliceable) {
+      dom.sliceReadout.textContent = v.sliceCount
+        ? `slice: ${v.sliceCount} segments where the hidden axis = ${v.slice.level.toFixed(2)}`
+        : 'slice: empty here, move the level toward 0';
+    }
+    if (dom.synthReadout) {
+      if (audioEngine.enabled) {
+        const s = audioEngine.getState();
+        dom.synthReadout.textContent = `synth: f₀ ${s.baseFrequency.toFixed(1)} Hz · LP ${s.cutoffFrequency} Hz (Q ${s.filterQ}) · ${s.preset}`;
+      } else {
+        dom.synthReadout.textContent = '';
+      }
+    }
   },
 });
 
@@ -185,6 +207,48 @@ dom.sliceLevel.addEventListener('input', () => {
 });
 dom.sliceOnly.addEventListener('change', () => viewer.setSlice({ only: dom.sliceOnly.checked }));
 
+function syncSynthUi() {
+  const on = audioEngine.enabled;
+  if (dom.synthOn) dom.synthOn.checked = on;
+  if (dom.btnSynth) {
+    dom.btnSynth.textContent = on ? 'SYNTH: ON' : 'SYNTH: OFF';
+    dom.btnSynth.classList.toggle('active', on);
+  }
+}
+
+if (dom.btnSynth) {
+  dom.btnSynth.addEventListener('click', async () => {
+    await audioEngine.toggle();
+    syncSynthUi();
+    viewer.pulse(0.45);
+  });
+}
+if (dom.synthOn) {
+  dom.synthOn.addEventListener('change', async () => {
+    await audioEngine.setEnabled(dom.synthOn.checked);
+    syncSynthUi();
+    viewer.pulse(0.35);
+  });
+}
+if (dom.synthPreset) {
+  dom.synthPreset.addEventListener('change', () => {
+    const val = dom.synthPreset.value;
+    if (val === 'default') {
+      audioEngine.autoPreset = true;
+      audioEngine.setSpace(current?.id, geometry?.dim);
+    } else {
+      audioEngine.setPreset(val, { auto: false });
+    }
+  });
+}
+if (dom.synthVolume) {
+  dom.synthVolume.addEventListener('input', () => {
+    const v = Number(dom.synthVolume.value);
+    if (dom.valSynthVol) dom.valSynthVol.textContent = v.toFixed(2);
+    audioEngine.setVolume(v);
+  });
+}
+
 // ---------------------------------------------------------------------------
 // Selecting and rebuilding
 // ---------------------------------------------------------------------------
@@ -218,7 +282,11 @@ function rebuild({ keepView = false } = {}) {
   }
 
   const view = keepView ? { x: viewer.view.x, y: viewer.view.y } : null;
+  audioEngine.setSpace(current.id, dim);
   viewer.setObject(geometry, { projection: dom.projection.value, faceOn: current.id === 'e8' });
+  if (viewer.features) {
+    audioEngine.updateFromFeatures(viewer.features, { sliceEnabled: viewer.slice.enabled });
+  }
   if (view) {
     viewer.view.x = view.x;
     viewer.view.y = view.y;
@@ -340,6 +408,7 @@ createAsk({
       .facts(params, geometry)
       .map(([k, v]) => `- ${k}: ${v}`)
       .join('\n'),
+    audio: audioEngine.getState(),
   }),
   onToken: () => viewer.pulse(0.06),
   onShow: (id) => {
@@ -347,6 +416,32 @@ createAsk({
       selectSpace(id);
       toast(`Showing ${getSpace(id).title}`);
     }
+  },
+  onResonance: async (directive) => {
+    if (directive.dimension && current.params.some((p) => p.key === 'dim')) {
+      params.dim = Math.max(2, Math.min(11, Math.round(Number(directive.dimension))));
+      paramMemory[current.id] = { ...params };
+      renderParamControls();
+      rebuild({ keepView: true });
+    }
+    if (directive.angles && typeof directive.angles === 'object') {
+      setRotation({
+        xw: Number(directive.angles.xw ?? dom.rot.xw.value),
+        yw: Number(directive.angles.yw ?? dom.rot.yw.value),
+        zw: Number(directive.angles.zw ?? dom.rot.zw.value),
+      });
+    }
+    if (typeof directive.sliceLevel === 'number') {
+      dom.sliceOn.checked = true;
+      dom.sliceLevel.value = directive.sliceLevel;
+      dom.valSlice.textContent = Number(directive.sliceLevel).toFixed(2);
+      viewer.setSlice({ enabled: true, level: Number(directive.sliceLevel) });
+    }
+    const state = await audioEngine.playResonance(directive);
+    if (dom.synthPreset && state.preset) dom.synthPreset.value = state.preset;
+    syncSynthUi();
+    viewer.pulse(0.75);
+    toast(`Playing resonance: ${state.presetLabel} (${state.dimension}D · ${state.baseFrequency} Hz)`);
   },
 });
 

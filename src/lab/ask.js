@@ -53,6 +53,17 @@ export function buildPayload(providerId, model, prompt, system) {
   return { model, messages, stream: true, temperature: 0.4 };
 }
 
+const VALID_RESONANCE_PRESETS = new Set([
+  'default',
+  'string_harmonics',
+  'e8_symphony',
+  'minor_chord',
+  'major_chord',
+  'clifford_torus',
+  'kaluza_klein',
+  'calabi_yau',
+]);
+
 /** Finds a trailing `SHOW: <id>` line and returns the id if it names a known space. */
 export function parseShowDirective(text, knownIds) {
   const match = text.match(/^\s*SHOW:\s*([a-z0-9-]+)\s*$/im);
@@ -61,23 +72,94 @@ export function parseShowDirective(text, knownIds) {
   return knownIds.includes(id) ? id : null;
 }
 
+/**
+ * Parses a `PLAY_RESONANCE: { preset: 'string_harmonics', dimension: N }` directive from model text.
+ * Supports both strict JSON and unquoted-key / single-quoted JS object literal syntax.
+ */
+export function parseResonanceDirective(text) {
+  if (typeof text !== 'string') return null;
+  const match = text.match(/^\s*PLAY_RESONANCE:\s*(\{[^\r\n]+\})\s*$/im);
+  if (!match) return null;
+  const raw = match[1].trim();
+
+  // Normalize relaxed JS literal `{ preset: 'string_harmonics', dimension: 6 }` into valid JSON
+  const normalizedJson = raw
+    .replace(/'([^'\\]*(?:\\.[^'\\]*)*)'/g, '"$1"')
+    .replace(/([{,]\s*)([a-zA-Z_][a-zA-Z0-9_]*)\s*:/g, '$1"$2":');
+
+  let parsed;
+  try {
+    parsed = JSON.parse(normalizedJson);
+  } catch {
+    return null;
+  }
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return null;
+
+  const presetRaw = typeof parsed.preset === 'string' ? parsed.preset.trim().toLowerCase().replace(/-/g, '_') : '';
+  if (!VALID_RESONANCE_PRESETS.has(presetRaw)) return null;
+
+  const out = { preset: presetRaw };
+  if (parsed.dimension !== undefined) {
+    const dim = Number(parsed.dimension);
+    if (!Number.isFinite(dim)) return null;
+    out.dimension = Math.max(2, Math.min(11, Math.round(dim)));
+  }
+  if (typeof parsed.sliceLevel === 'number' && Number.isFinite(parsed.sliceLevel)) {
+    out.sliceLevel = Math.max(-1.5, Math.min(1.5, parsed.sliceLevel));
+  }
+  if (parsed.angles && typeof parsed.angles === 'object' && !Array.isArray(parsed.angles)) {
+    const angles = {};
+    for (const k of ['xw', 'yw', 'zw']) {
+      if (Number.isFinite(Number(parsed.angles[k]))) angles[k] = Number(parsed.angles[k]);
+    }
+    if (Object.keys(angles).length) out.angles = angles;
+  }
+  return out;
+}
+
+function formatAudioState(audio) {
+  if (!audio) return '';
+  if (typeof audio === 'string') return `Audio synthesizer state: ${audio}`;
+  const status = audio.enabled ? 'ACTIVE' : 'MUTED';
+  const parts = [
+    `status=${status}`,
+    `preset=${audio.preset || 'default'}`,
+    `dimension=${audio.dimension ?? 4}D`,
+    `baseFrequency=${audio.baseFrequency ?? 110}Hz`,
+    `lowpassCutoff=${audio.cutoffFrequency ?? 2400}Hz (Q=${audio.filterQ ?? 2.2})`,
+  ];
+  if (typeof audio.sliceVelocity === 'number') parts.push(`sliceVelocity=${audio.sliceVelocity}`);
+  if (Array.isArray(audio.voiceFrequencies) && audio.voiceFrequencies.length) {
+    parts.push(`overtones=[${audio.voiceFrequencies.join(', ')}]Hz`);
+  }
+  return `Audio synthesizer state: ${parts.join(', ')}.`;
+}
+
 export function systemPrompt(context, knownIds) {
-  return [
-    'You are the guide inside Calabi-Yau Lab, a desktop tool for seeing higher-dimensional geometry.',
+  const blocks = [
+    'You are the guide inside Calabi-Yau Lab, a desktop tool and Synesthesia Engine for seeing and hearing higher-dimensional geometry.',
     `The user is looking at: ${context.title}. Settings: ${context.settings}.`,
     `Facts shown on screen:\n${context.facts}`,
+  ];
+  if (context.audio) {
+    blocks.push(formatAudioState(context.audio));
+  }
+  blocks.push(
     'Answer accurately and plainly, in under 180 words unless asked for more. Use the on-screen object as your example.',
     'Separate established mathematics from speculative physics, and say when something is speculative.',
     `If a different object in the lab would answer the question better, end with one line "SHOW: <id>" using one of: ${knownIds.join(', ')}.`,
-  ].join('\n\n');
+    "If the user asks to hear, sonify, or play an acoustic harmonic configuration, end with one line \"PLAY_RESONANCE: { preset: 'string_harmonics', dimension: N }\" (valid presets: string_harmonics, e8_symphony, minor_chord, major_chord, clifford_torus, kaluza_klein, calabi_yau)."
+  );
+  return blocks.join('\n\n');
 }
 
 /**
  * Wires the Ask panel. `tauri` is null in the browser build.
  * @param {{dom: object, tauri: null | {invoke: Function, listen: Function}, getContext: () => object,
- *          knownIds: string[], onToken: (t: string) => void, onShow: (id: string) => void}} opts
+ *          knownIds: string[], onToken: (t: string) => void, onShow: (id: string) => void,
+ *          onResonance?: (directive: object) => void}} opts
  */
-export function createAsk({ dom, tauri, getContext, knownIds, onToken, onShow }) {
+export function createAsk({ dom, tauri, getContext, knownIds, onToken, onShow, onResonance }) {
   const history = [];
   let busy = false;
   let runCounter = 0;
@@ -217,7 +299,10 @@ export function createAsk({ dom, tauri, getContext, knownIds, onToken, onShow })
     const onPiece = (token, thinking) => {
       if (thinking) return;
       text += token;
-      out.textContent = text.replace(/^\s*SHOW:.*$/im, '').trim();
+      out.textContent = text
+        .replace(/^\s*SHOW:.*$/gim, '')
+        .replace(/^\s*PLAY_RESONANCE:.*$/gim, '')
+        .trim();
       dom.log.scrollTop = dom.log.scrollHeight;
       onToken(token);
     };
@@ -246,6 +331,8 @@ export function createAsk({ dom, tauri, getContext, knownIds, onToken, onShow })
       history.push({ role: 'user', text: question }, { role: 'guide', text });
       const show = parseShowDirective(text, knownIds);
       if (show) onShow(show);
+      const resonance = parseResonanceDirective(text);
+      if (resonance && onResonance) onResonance(resonance);
     } catch (err) {
       out.classList.add('error');
       out.textContent = `${p.badge} (${model()}): ${err?.message || err}. Open MODEL to set a key or pick another provider.`;

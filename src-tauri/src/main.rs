@@ -3,10 +3,15 @@
     windows_subsystem = "windows"
 )]
 
+mod nd_engine;
 mod stream;
 
 use base64::Engine;
 use futures_util::StreamExt;
+use nd_engine::{
+    compute_nd_frame, encode_f32_buffer, step_particles_nd, GivensPlane, NdEngineHandle,
+    NdFrameBuffer, MAX_DIM,
+};
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -17,7 +22,8 @@ use stream::{
 use std::env;
 use std::fs;
 use std::path::PathBuf;
-use std::time::Instant;
+use std::sync::atomic::Ordering;
+use std::time::{Duration, Instant};
 use tauri::Window;
 
 /// Resolves an API key from explicit user input or standard provider environment variables.
@@ -416,9 +422,176 @@ async fn save_snapshot(name: String, data_url: String) -> Result<String, String>
     Ok(path.display().to_string())
 }
 
+// ---------------------------------------------------------------------------
+// High-Performance N-Dimensional Matrix & Slicing Command Channel
+// ---------------------------------------------------------------------------
+
+#[tauri::command]
+fn sync_nd_geometry(
+    engine: tauri::State<'_, NdEngineHandle>,
+    dim: usize,
+    points: Vec<Vec<f64>>,
+    polygons: Vec<Vec<usize>>,
+    hue: Option<Vec<f64>>,
+    edge_count: Option<usize>,
+) -> Result<usize, String> {
+    let clamped_dim = dim.clamp(2, MAX_DIM);
+    let mut fixed_points = Vec::with_capacity(points.len());
+    for pt in points {
+        let mut arr = [0.0; MAX_DIM];
+        for (k, &v) in pt.iter().take(clamped_dim).enumerate() {
+            arr[k] = v;
+        }
+        fixed_points.push(arr);
+    }
+    let count = fixed_points.len();
+    let mut guard = engine
+        .state
+        .write()
+        .map_err(|_| "Failed to acquire write lock on N-D engine".to_string())?;
+    guard.dim = clamped_dim;
+    guard.points = fixed_points;
+    guard.polygons = polygons;
+    guard.hue = hue;
+    guard.edge_count = edge_count.unwrap_or(count);
+    Ok(count)
+}
+
+#[tauri::command]
+fn mutate_nd_frame(
+    engine: tauri::State<'_, NdEngineHandle>,
+    planes: Vec<GivensPlane>,
+    projection: String,
+    slice_enabled: bool,
+    slice_level: f64,
+    slice_only: bool,
+    dt: f64,
+) -> Result<NdFrameBuffer, String> {
+    let mut guard = engine
+        .state
+        .write()
+        .map_err(|_| "Failed to acquire write lock on N-D engine".to_string())?;
+    Ok(compute_nd_frame(
+        &mut guard,
+        &planes,
+        &projection,
+        slice_enabled,
+        slice_level,
+        slice_only,
+        dt,
+    ))
+}
+
+#[tauri::command]
+fn step_hyperspace_particles(
+    engine: tauri::State<'_, NdEngineHandle>,
+    count: usize,
+    dt: f64,
+) -> Result<String, String> {
+    let mut guard = engine
+        .state
+        .write()
+        .map_err(|_| "Failed to acquire write lock on N-D engine".to_string())?;
+    let buf = step_particles_nd(&mut guard, count, dt);
+    Ok(encode_f32_buffer(&buf))
+}
+
+#[tauri::command]
+#[allow(clippy::too_many_arguments)]
+async fn start_nd_stream(
+    window: Window,
+    engine: tauri::State<'_, NdEngineHandle>,
+    planes: Vec<GivensPlane>,
+    spin_speed: f64,
+    projection: String,
+    slice_enabled: bool,
+    slice_level: f64,
+    slice_only: bool,
+    fps: Option<u32>,
+) -> Result<u64, String> {
+    let gen = engine.stream_generation.fetch_add(1, Ordering::SeqCst) + 1;
+    engine.streaming.store(true, Ordering::SeqCst);
+
+    let state = engine.state.clone();
+    let streaming = engine.streaming.clone();
+    let gen_ref = engine.stream_generation.clone();
+    let target_fps = fps.unwrap_or(60).clamp(15, 120);
+    let frame_dur = Duration::from_secs_f64(1.0 / (target_fps as f64));
+    let dt = frame_dur.as_secs_f64();
+
+    tokio::spawn(async move {
+        let mut phase = 0.0_f64;
+        while streaming.load(Ordering::SeqCst) && gen_ref.load(Ordering::SeqCst) == gen {
+            phase += dt * spin_speed;
+            let frame_opt = {
+                if let Ok(mut guard) = state.write() {
+                    let dim = guard.dim;
+                    let mut active_planes = planes.clone();
+                    if spin_speed.abs() > 1e-5 && dim >= 4 {
+                        active_planes.push(GivensPlane {
+                            i: 0,
+                            j: 3,
+                            angle: phase,
+                        });
+                        active_planes.push(GivensPlane {
+                            i: 2,
+                            j: 3,
+                            angle: phase * 0.618,
+                        });
+                        for k in 4..dim {
+                            active_planes.push(GivensPlane {
+                                i: k % 3,
+                                j: k,
+                                angle: phase * (0.5 + 0.13 * (k as f64)),
+                            });
+                        }
+                    }
+                    Some(compute_nd_frame(
+                        &mut guard,
+                        &active_planes,
+                        &projection,
+                        slice_enabled,
+                        slice_level,
+                        slice_only,
+                        dt,
+                    ))
+                } else {
+                    None
+                }
+            };
+
+            if let Some(frame) = frame_opt {
+                if window.emit("nd-frame-buffer", frame).is_err() {
+                    break;
+                }
+            }
+            tokio::time::sleep(frame_dur).await;
+        }
+    });
+
+    Ok(gen)
+}
+
+#[tauri::command]
+fn stop_nd_stream(engine: tauri::State<'_, NdEngineHandle>) -> Result<(), String> {
+    engine.streaming.store(false, Ordering::SeqCst);
+    engine.stream_generation.fetch_add(1, Ordering::SeqCst);
+    Ok(())
+}
+
 fn main() {
     tauri::Builder::default()
-        .invoke_handler(tauri::generate_handler![ask_model, fetch_provider_models, save_snapshot])
+        .manage(NdEngineHandle::default())
+        .invoke_handler(tauri::generate_handler![
+            ask_model,
+            fetch_provider_models,
+            save_snapshot,
+            sync_nd_geometry,
+            mutate_nd_frame,
+            step_hyperspace_particles,
+            start_nd_stream,
+            stop_nd_stream
+        ])
         .run(tauri::generate_context!())
         .expect("error while running Calabi-Yau Lab");
 }

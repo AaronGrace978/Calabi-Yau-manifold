@@ -668,3 +668,258 @@ export function sliceByLastAxis(rotated, polygons, level) {
   }
   return segments;
 }
+
+// ---------------------------------------------------------------------------
+// Synesthesia Feature-Extraction Matrix
+// ---------------------------------------------------------------------------
+
+/**
+ * Channel layout for the normalized [0, 1] 16-element feature vector (`features.vector`).
+ * Indices 0..7 carry the 8-band N-dimensional depth harmonic distribution;
+ * indices 8..15 carry normalized geometric, projection-distance, and slicing telemetry.
+ */
+export const FEATURE_CHANNELS = Object.freeze({
+  DEPTH_BAND_0: 0,
+  DEPTH_BAND_1: 1,
+  DEPTH_BAND_2: 2,
+  DEPTH_BAND_3: 3,
+  DEPTH_BAND_4: 4,
+  DEPTH_BAND_5: 5,
+  DEPTH_BAND_6: 6,
+  DEPTH_BAND_7: 7,
+  MEAN_PROJ_DISTANCE: 8,
+  SPREAD_PROJ_DISTANCE: 9,
+  SLICE_VELOCITY: 10,
+  SLICE_SPEED: 11,
+  SLICE_LEVEL_NORM: 12,
+  VERTEX_DENSITY: 13,
+  EDGE_DENSITY: 14,
+  ACTIVE_SLICE_RATIO: 15,
+});
+
+const DEPTH_BAND_COUNT = 8;
+const MAX_REF_VERTICES = 2048; // 11-cube vertex ceiling
+const MAX_REF_EDGES = 11264;   // 11-cube edge ceiling
+
+function clamp01(x) {
+  if (!Number.isFinite(x)) return 0;
+  return x < 0 ? 0 : x > 1 ? 1 : x;
+}
+
+/**
+ * Computes the projection origin in R^N for the active projection mode.
+ * - perspective: camera sits at `cameraDistance` along every extra axis k >= 3
+ * - stereographic: north pole (0, ..., 0, 1)
+ * - orthographic (or dim <= 3): origin (0, ..., 0)
+ */
+export function projectionOrigin(dim, mode = 'perspective', cameraDistance = 2.4) {
+  const origin = new Array(dim).fill(0);
+  if (dim <= 3 || mode === 'orthographic') return origin;
+  if (mode === 'stereographic') {
+    origin[dim - 1] = 1;
+    return origin;
+  }
+  for (let k = 3; k < dim; k++) origin[k] = cameraDistance;
+  return origin;
+}
+
+/**
+ * Extracts a normalized real-time feature matrix for any active manifold
+ * (e.g., Calabi-Yau, E8, Clifford Torus, or N-polytope).
+ *
+ * Tracks:
+ *  1. N-Dimensional vertex distances from the projection origin (per-vertex normalized
+ *     array `vertexDistances` + summary moments + 8-band depth harmonic distribution).
+ *  2. Rate of change of the current slice coordinate (`sliceVelocity` and `sliceSpeed`).
+ *  3. Active vertex/edge counts matching the f-vector state (`fVector`, `activeVertices`,
+ *     `activeEdges`, and normalized densities).
+ *
+ * @param {object} geo Manifold object produced by geometry builders
+ * @param {number[][]} [rotated] Rotated N-D vertex coordinates (defaults to `geo.points`)
+ * @param {{
+ *   projection?: string,
+ *   cameraDistance?: number,
+ *   sliceEnabled?: boolean,
+ *   sliceLevel?: number,
+ *   prevSliceLevel?: number,
+ *   dt?: number,
+ *   sliceSegments?: number,
+ *   outVector?: Float32Array,
+ *   outDistances?: Float32Array,
+ *   outDepthBands?: Float32Array
+ * }} [state]
+ */
+export function extractFeatureMatrix(geo, rotated = null, state = {}) {
+  const pts = rotated && rotated.length ? rotated : geo?.points || [];
+  const vertexCount = pts.length;
+  const dim = geo?.dim || (vertexCount ? pts[0].length : 3);
+  const edgeCount = geo?.edges?.length || 0;
+  const faceCount = geo?.faces?.length || geo?.triangles?.length || 0;
+
+  const {
+    projection = 'perspective',
+    cameraDistance = 2.4,
+    sliceEnabled = false,
+    sliceLevel = 0,
+    prevSliceLevel = sliceLevel,
+    dt = 1 / 60,
+    sliceSegments = 0,
+  } = state;
+
+  const vector = state.outVector instanceof Float32Array && state.outVector.length >= 16
+    ? state.outVector
+    : new Float32Array(16);
+  const vertexDistances =
+    state.outDistances instanceof Float32Array && state.outDistances.length === vertexCount
+      ? state.outDistances
+      : new Float32Array(vertexCount);
+  const depthDistribution =
+    state.outDepthBands instanceof Float32Array && state.outDepthBands.length === DEPTH_BAND_COUNT
+      ? state.outDepthBands
+      : new Float32Array(DEPTH_BAND_COUNT);
+
+  depthDistribution.fill(0);
+
+  // 1. N-D vertex distances from projection origin & hidden-axis depth distribution
+  const origin = projectionOrigin(dim, projection, cameraDistance);
+  const hidden = Math.max(0, dim - 1);
+  let minDist = Infinity;
+  let maxDist = -Infinity;
+  let loHidden = Infinity;
+  let hiHidden = -Infinity;
+
+  for (let i = 0; i < vertexCount; i++) {
+    const p = pts[i];
+    let d2 = 0;
+    for (let k = 0; k < dim; k++) {
+      const diff = (p[k] || 0) - origin[k];
+      d2 += diff * diff;
+    }
+    const d = Math.sqrt(d2);
+    vertexDistances[i] = d;
+    if (d < minDist) minDist = d;
+    if (d > maxDist) maxDist = d;
+
+    const w = p[hidden] || 0;
+    if (w < loHidden) loHidden = w;
+    if (w > hiHidden) hiHidden = w;
+  }
+
+  const distSpan = maxDist - minDist;
+  const hiddenSpan = Math.max(1e-6, hiHidden - loHidden);
+  const maxTheoreticalDist = Math.max(1, Math.hypot(1, ...origin) + 1);
+
+  let sumNormDist = 0;
+  let sumSqNormDist = 0;
+
+  for (let i = 0; i < vertexCount; i++) {
+    const rawD = vertexDistances[i];
+    const normD = distSpan > 1e-6 ? (rawD - minDist) / distSpan : clamp01(rawD / maxTheoreticalDist);
+    vertexDistances[i] = clamp01(normD);
+    sumNormDist += vertexDistances[i];
+    sumSqNormDist += vertexDistances[i] * vertexDistances[i];
+
+    // Mirror viewer.js color coordinate logic to populate 8 harmonic depth bands
+    const p = pts[i];
+    const t =
+      geo?.hue && geo.hue[i] >= 0
+        ? clamp01(geo.hue[i])
+        : dim >= 3
+        ? clamp01(((p[hidden] || 0) - loHidden) / hiddenSpan)
+        : 0.25;
+    const bandFloat = t * (DEPTH_BAND_COUNT - 1);
+    const b0 = Math.min(DEPTH_BAND_COUNT - 1, Math.max(0, Math.floor(bandFloat)));
+    const b1 = Math.min(DEPTH_BAND_COUNT - 1, b0 + 1);
+    const frac = bandFloat - b0;
+    // Weight each vertex contribution by its proximity in N-D space
+    const weight = 0.5 + 0.5 * (1 - vertexDistances[i]);
+    depthDistribution[b0] += (1 - frac) * weight;
+    depthDistribution[b1] += frac * weight;
+  }
+
+  let maxBand = 0;
+  for (let b = 0; b < DEPTH_BAND_COUNT; b++) {
+    if (depthDistribution[b] > maxBand) maxBand = depthDistribution[b];
+  }
+  for (let b = 0; b < DEPTH_BAND_COUNT; b++) {
+    depthDistribution[b] = maxBand > 1e-6 ? clamp01(depthDistribution[b] / maxBand) : 0;
+    vector[b] = depthDistribution[b];
+  }
+
+  const meanDistance = vertexCount > 0 ? clamp01(sumNormDist / vertexCount) : 0;
+  const variance = vertexCount > 0 ? Math.max(0, sumSqNormDist / vertexCount - meanDistance * meanDistance) : 0;
+  const distanceSpread = clamp01(Math.sqrt(variance) * 2);
+
+  // 2. Rate of change of the current slice coordinate (slider velocity)
+  const safeDt = Math.max(1e-4, dt);
+  const rawVelocity = sliceEnabled ? (sliceLevel - prevSliceLevel) / safeDt : 0;
+  // Signed velocity mapped to [0, 1] with 0.5 = stationary, and unsigned speed in [0, 1]
+  const signedVelocity = Math.tanh(rawVelocity * 0.35);
+  const sliceVelocity = clamp01(0.5 + 0.5 * signedVelocity);
+  const sliceSpeed = clamp01(Math.abs(rawVelocity) / 4.0);
+  const sliceLevelNorm = clamp01((sliceLevel + 1.2) / 2.4);
+
+  // 3. Active vertex/edge counts matching the f-vector state
+  const f =
+    geo?.family && ['cube', 'simplex', 'orthoplex'].includes(geo.family)
+      ? fVector(geo.family, dim)
+      : [vertexCount, edgeCount, ...(faceCount ? [faceCount] : []), ...(geo?.cells ? [geo.cells] : [])];
+
+  const fVertices = f[0] ?? vertexCount;
+  const fEdges = f[1] ?? edgeCount;
+
+  // When slicing is enabled, track active cross-section vertices/edges alongside full manifold f-vector
+  let activeVertices = fVertices;
+  let activeEdges = fEdges;
+  if (sliceEnabled) {
+    if (sliceSegments > 0) {
+      activeEdges = sliceSegments;
+      activeVertices = sliceSegments * 2;
+    } else {
+      // Count vertices within a thin slab around the slice hyperplane
+      const slab = Math.max(0.08, hiddenSpan * 0.1);
+      let nearCount = 0;
+      for (let i = 0; i < vertexCount; i++) {
+        if (Math.abs((pts[i][hidden] || 0) - sliceLevel) <= slab) nearCount++;
+      }
+      activeVertices = nearCount;
+      activeEdges = Math.round((nearCount / Math.max(1, vertexCount)) * fEdges);
+    }
+  }
+
+  const vertexDensity = clamp01(Math.log2(1 + fVertices) / Math.log2(1 + MAX_REF_VERTICES));
+  const edgeDensity = clamp01(Math.log2(1 + fEdges) / Math.log2(1 + MAX_REF_EDGES));
+  const activeSliceRatio = sliceEnabled
+    ? clamp01(activeVertices / Math.max(1, fVertices))
+    : 1;
+
+  vector[FEATURE_CHANNELS.MEAN_PROJ_DISTANCE] = meanDistance;
+  vector[FEATURE_CHANNELS.SPREAD_PROJ_DISTANCE] = distanceSpread;
+  vector[FEATURE_CHANNELS.SLICE_VELOCITY] = sliceVelocity;
+  vector[FEATURE_CHANNELS.SLICE_SPEED] = sliceSpeed;
+  vector[FEATURE_CHANNELS.SLICE_LEVEL_NORM] = sliceLevelNorm;
+  vector[FEATURE_CHANNELS.VERTEX_DENSITY] = vertexDensity;
+  vector[FEATURE_CHANNELS.EDGE_DENSITY] = edgeDensity;
+  vector[FEATURE_CHANNELS.ACTIVE_SLICE_RATIO] = activeSliceRatio;
+
+  return {
+    vector,
+    vertexDistances,
+    depthDistribution,
+    fVector: f,
+    dim,
+    vertexCount: fVertices,
+    edgeCount: fEdges,
+    faceCount,
+    activeVertices,
+    activeEdges,
+    sliceLevel,
+    rawSliceVelocity: rawVelocity,
+    sliceVelocity: signedVelocity,
+    sliceSpeed,
+    meanDistance,
+    distanceSpread,
+    hiddenSpan,
+  };
+}
+

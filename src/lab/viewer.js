@@ -1,8 +1,18 @@
 import * as THREE from 'three';
-import { rotationMatrix, rotateInto, projectTo3, sliceByLastAxis } from './geometry.js';
+import { rotationMatrix, rotateInto, projectTo3, sliceByLastAxis, extractFeatureMatrix } from './geometry.js';
 
 const STEREO_LIMIT = 7;
 const PALETTE = [new THREE.Color('#22e4ff'), new THREE.Color('#8a5cff'), new THREE.Color('#ff3fb4'), new THREE.Color('#ffc845')];
+const FPS_THRESHOLD = 60;
+const LOW_FPS_FRAMES_TRIGGER = 12;
+
+function decodeF32Base64(b64) {
+  if (!b64) return null;
+  const bin = atob(b64);
+  const bytes = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+  return new Float32Array(bytes.buffer);
+}
 
 function paletteColor(t, out) {
   const x = Math.min(0.9999, Math.max(0, t)) * (PALETTE.length - 1);
@@ -16,15 +26,26 @@ function paletteColor(t, out) {
  * dimension reads as colour.
  */
 export class LabViewer {
-  constructor(container, { onFrame } = {}) {
+  constructor(container, { onFrame, tauri = null } = {}) {
     this.container = container;
     this.onFrame = onFrame;
+    this.tauri = tauri;
     this.projection = 'perspective';
     this.angles = { xw: 0, yw: 0, zw: 0 };
     this.autoSpin = false;
     this.spinSpeed = 0.35;
     this.spinPhase = 0;
     this.slice = { enabled: false, level: 0, only: false };
+    this.prevSliceLevel = 0;
+    this.lastDt = 1 / 60;
+    this.fps = 60;
+    this.lowFpsStreak = 0;
+    this.rustOffloadActive = false;
+    this.rustBusy = false;
+    this.featureVector = new Float32Array(16);
+    this.depthBands = new Float32Array(8);
+    this.vertexDistances = new Float32Array(0);
+    this.features = null;
     this.glow = 0;
     this.drag = null;
     this.view = { x: 0.35, y: -0.5 };
@@ -43,8 +64,16 @@ export class LabViewer {
     this.scene.add(this.group);
     this.buildHalo();
     this.bindInput();
+    this.bindRustChannel();
     this.resize();
     this.loop();
+  }
+
+  bindRustChannel() {
+    if (!this.tauri?.listen) return;
+    this.tauri.listen('nd-frame-buffer', (event) => {
+      if (event?.payload) this.applyRustFrameBuffer(event.payload);
+    });
   }
 
   buildHalo() {
@@ -84,7 +113,23 @@ export class LabViewer {
     this.rotated = geo.points.map((p) => new Array(p.length).fill(0));
     this.positions = new Float32Array(n * 3);
     this.colors = new Float32Array(n * 3);
+    this.vertexDistances = new Float32Array(n);
     this.polygons = geo.kind === 'surface' ? geo.triangles : geo.faces || null;
+    this.rustOffloadActive = false;
+    this.lowFpsStreak = 0;
+
+    if (this.tauri?.invoke) {
+      this.tauri
+        .invoke('sync_nd_geometry', {
+          dim: geo.dim,
+          points: geo.points,
+          polygons: this.polygons || [],
+          hue: geo.hue || null,
+          family: geo.family || null,
+          edgeCount: geo.edges.length,
+        })
+        .catch(() => {});
+    }
 
     const posAttr = new THREE.BufferAttribute(this.positions, 3);
     const colAttr = new THREE.BufferAttribute(this.colors, 3);
@@ -233,6 +278,77 @@ export class LabViewer {
     this.lines.geometry.computeBoundingSphere();
 
     this.updateSlice(mode);
+
+    this.features = extractFeatureMatrix(geo, this.rotated, {
+      projection: mode,
+      cameraDistance: 2.4,
+      sliceEnabled: this.slice.enabled,
+      sliceLevel: this.slice.level,
+      prevSliceLevel: this.prevSliceLevel,
+      dt: this.lastDt,
+      sliceSegments: this.sliceCount || 0,
+      outVector: this.featureVector,
+      outDistances: this.vertexDistances,
+      outDepthBands: this.depthBands,
+    });
+    this.prevSliceLevel = this.slice.level;
+  }
+
+  /**
+   * Applies a binary/typed-array frame streamed from the Rust high-performance N-D engine.
+   */
+  applyRustFrameBuffer(frame) {
+    if (!this.geo || !this.lines) return;
+    const posBuf = frame.positionsB64 ? decodeF32Base64(frame.positionsB64) : frame.positions;
+    const colBuf = frame.colorsB64 ? decodeF32Base64(frame.colorsB64) : frame.colors;
+    const sliceBuf = frame.sliceB64 ? decodeF32Base64(frame.sliceB64) : frame.slicePositions;
+
+    if (posBuf && posBuf.length === this.positions.length) {
+      this.positions.set(posBuf);
+      this.lines.geometry.attributes.position.needsUpdate = true;
+    }
+    if (colBuf && colBuf.length === this.colors.length) {
+      this.colors.set(colBuf);
+      this.lines.geometry.attributes.color.needsUpdate = true;
+    }
+    this.lines.geometry.computeBoundingSphere();
+
+    if (this.slice.enabled && sliceBuf && sliceBuf.length > 0) {
+      let arr = this.sliceLines.geometry.attributes.position.array;
+      if (arr.length < sliceBuf.length) {
+        arr = new Float32Array(Math.max(sliceBuf.length, arr.length * 2));
+        this.sliceLines.geometry.setAttribute('position', new THREE.BufferAttribute(arr, 3));
+      }
+      arr.set(sliceBuf);
+      this.sliceLines.geometry.attributes.position.needsUpdate = true;
+      this.sliceCount = Math.floor(sliceBuf.length / 6);
+      this.sliceLines.geometry.setDrawRange(0, this.sliceCount * 2);
+      this.sliceLines.geometry.computeBoundingSphere();
+      this.sliceLines.visible = this.sliceCount > 0;
+    } else if (!this.slice.enabled) {
+      this.sliceLines.visible = false;
+      this.sliceCount = 0;
+    }
+
+    if (Array.isArray(frame.features) && frame.features.length === 16) {
+      this.featureVector.set(frame.features);
+      for (let b = 0; b < 8; b++) this.depthBands[b] = this.featureVector[b];
+      this.features = {
+        ...(this.features || {}),
+        vector: this.featureVector,
+        depthDistribution: this.depthBands,
+        vertexCount: this.geo.points.length,
+        edgeCount: this.geo.edges.length,
+        activeVertices: frame.activeVertices ?? this.geo.points.length,
+        activeEdges: frame.activeEdges ?? this.geo.edges.length,
+        dim: this.geo.dim,
+        sliceLevel: this.slice.level,
+        sliceVelocity: (this.featureVector[10] - 0.5) * 2,
+        sliceSpeed: this.featureVector[11],
+        meanDistance: this.featureVector[8],
+        distanceSpread: this.featureVector[9],
+      };
+    }
   }
 
   updateSlice(mode) {
@@ -309,12 +425,52 @@ export class LabViewer {
 
   loop() {
     this.frame = requestAnimationFrame(() => this.loop());
-    const dt = Math.min(0.05, this.clock.getDelta());
+    const rawDt = this.clock.getDelta();
+    const dt = Math.min(0.05, rawDt || 1 / 60);
+    this.lastDt = dt;
+
+    if (rawDt > 0.001) {
+      const instFps = 1 / rawDt;
+      this.fps = this.fps * 0.9 + instFps * 0.1;
+      if (this.fps < FPS_THRESHOLD && this.geo && this.geo.dim >= 4) {
+        this.lowFpsStreak++;
+        if (this.lowFpsStreak >= LOW_FPS_FRAMES_TRIGGER && this.tauri?.invoke) {
+          this.rustOffloadActive = true;
+        }
+      } else if (this.fps > FPS_THRESHOLD + 4) {
+        this.lowFpsStreak = Math.max(0, this.lowFpsStreak - 1);
+      }
+    }
+
     if (this.autoSpin) this.spinPhase += dt * this.spinSpeed;
     this.glow *= 0.94;
 
     if (this.geo) {
-      this.updateGeometry();
+      if (this.rustOffloadActive && this.tauri?.invoke && !this.rustBusy) {
+        this.rustBusy = true;
+        const mode = this.projection === 'stereographic' && this.geo.dim !== 4 ? 'perspective' : this.projection;
+        this.tauri
+          .invoke('mutate_nd_frame', {
+            planes: this.planes(this.geo.dim),
+            projection: mode,
+            sliceEnabled: this.slice.enabled,
+            sliceLevel: this.slice.level,
+            sliceOnly: this.slice.only,
+            dt,
+          })
+          .then((frame) => {
+            if (frame) this.applyRustFrameBuffer(frame);
+          })
+          .catch(() => {
+            this.rustOffloadActive = false;
+            this.updateGeometry();
+          })
+          .finally(() => {
+            this.rustBusy = false;
+          });
+      } else if (!this.rustOffloadActive) {
+        this.updateGeometry();
+      }
       const lift = 1 + this.glow * 0.35;
       this.lines.material.opacity = Math.min(1, this.baseLineOpacity * lift);
       if (this.mesh) this.mesh.material.opacity = 0.12 * lift;

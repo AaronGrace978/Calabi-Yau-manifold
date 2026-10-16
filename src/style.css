@@ -113,7 +113,8 @@ textarea {
   background: rgba(34, 228, 255, 0.14);
 }
 
-.chip.accent {
+.chip.accent,
+.chip.active {
   border-color: rgba(255, 63, 180, 0.6);
   background: rgba(255, 63, 180, 0.14);
 }
