@@ -7,9 +7,9 @@ on:
   workflow_dispatch:
     inputs:
       tag_name:
-        description: 'Release tag version (e.g. v0.7.0)'
+        description: 'Release tag version (e.g. v0.8.0)'
         required: false
-        default: 'v0.7.0'
+        default: 'v0.8.0'
 
 permissions:
   contents: write
@@ -48,7 +48,7 @@ jobs:
           elif [[ -n "${{ inputs.tag_name }}" ]]; then
             echo "tag=${{ inputs.tag_name }}" >> "$GITHUB_OUTPUT"
           else
-            echo "tag=v0.7.0" >> "$GITHUB_OUTPUT"
+            echo "tag=v0.8.0" >> "$GITHUB_OUTPUT"
           fi
 
       - name: Install Linux system dependencies (GTK3 / WebKit2GTK / AppIndicator)
@@ -102,18 +102,18 @@ jobs:
           releaseBody: |
             ## Calabi-Yau Lab ${{ steps.meta.outputs.tag }}
 
-            See what higher dimensions look like. The app builder, command runner and token instrument are gone; the app is now a geometry lab.
+            See and hear what higher dimensions look like. The geometry lab is now a Synesthesia Engine: vertex counts, hidden-axis depth, and slice motion drive a polyphonic synthesizer.
 
+            - **Topological sonification**: an 8-voice Web Audio synth. Vertex count sets the fundamental, N-dimensional depth sets the overtones, and the slice slider sweeps a low-pass filter.
+            - **Presets**: E8 Coxeter symphony, Calabi-Yau filter sweep, Clifford torus loop, 24-cell minor ninth, Kaluza-Klein momentum tower, and string harmonics.
+            - **Rust 11D offload**: thread-safe Tauri commands rotate, project, and slice manifolds up to 11D, then stream Float32 buffers back to the viewer when the frame rate drops.
+            - **Acoustic geometry guide**: the Ask panel receives live synth state and can play a preset with `PLAY_RESONANCE`.
             - **Dimension ladder, 2D to 11D**: hypercube, simplex and cross-polytope, with counted faces checked against the f-vector.
             - **4D regular polytopes**: 24-cell and 600-cell with exact cross-sections.
-            - **Surfaces in 4D**: Clifford torus, Hopf fibration (linked circles), Klein bottle without self-intersection.
-            - **Calabi-Yau**: the Fermat curve picture of a Calabi-Yau slice, degree 2 to 7.
-            - **E8**: all 240 roots in the computed Coxeter-plane (Petrie) projection.
-            - **Compact extra dimension**: the Kaluza-Klein garden hose.
-            - 4D rotation sliders, spin through every hidden axis, perspective / orthographic / stereographic projection, exact slicing, PNG snapshots.
-            - **Ask about this**: stream an explanation of the object on screen from any configured provider.
+            - **Surfaces in 4D**: Clifford torus, Hopf fibration, Klein bottle.
+            - **Calabi-Yau, E8, and the Kaluza-Klein garden hose**, plus 4D rotation, hidden-axis spin, perspective / orthographic / stereographic projection, exact slicing, and PNG snapshots.
 
-            Installers: Windows (`.msi`, `.exe`), macOS Apple Silicon and Intel (`.dmg`), Linux (`.AppImage`, `.deb`).
+            Installers: Windows (`.msi`, `.exe`), macOS Apple Silicon and Intel (`.dmg`), Linux (`.AppImage`, `.deb`, `.rpm`).
           releaseDraft: false
           prerelease: false
           args: ${{ matrix.args }}
