@@ -21,7 +21,16 @@ import {
   cliffordTorus,
   kleinBottle,
   dot,
+  FEATURE_CHANNELS,
+  projectionOrigin,
+  extractFeatureMatrix,
 } from '../src/lab/geometry.js';
+import {
+  vertexCountToBaseFrequency,
+  depthToVoiceHarmonics,
+  sliceToFilterParams,
+  SynesthesiaAudioEngine,
+} from '../src/lab/audio.js';
 import { SPACES, defaultParams } from '../src/lab/catalog.js';
 
 test('N-cube, simplex and cross-polytope counts match their f-vectors for 2..11 dimensions', () => {
@@ -168,4 +177,121 @@ test('every catalog space builds with its default parameters and has notes and f
     assert.ok(space.facts(params, geo).length > 0, space.id);
     assert.ok(space.badge(params));
   }
+});
+
+test('extractFeatureMatrix exposes normalized distances, slice velocity, and f-vector counts across manifolds', () => {
+  for (const geo of [fermatSurface(5, 8), e8Polytope(), cliffordTorus(16), hypercube(6)]) {
+    const feat = extractFeatureMatrix(geo, geo.points, {
+      projection: 'perspective',
+      cameraDistance: 2.4,
+      sliceEnabled: true,
+      sliceLevel: 0.25,
+      prevSliceLevel: -0.05,
+      dt: 1 / 60,
+      sliceSegments: 12,
+    });
+    assert.equal(feat.vector.length, 16);
+    assert.equal(feat.vertexDistances.length, geo.points.length);
+    assert.equal(feat.depthDistribution.length, 8);
+    for (const v of feat.vector) assert.ok(v >= 0 && v <= 1, `feature vector entry ${v} in [0, 1]`);
+    for (const d of feat.vertexDistances) assert.ok(d >= 0 && d <= 1, `vertex distance ${d} in [0, 1]`);
+    assert.ok(feat.sliceVelocity > 0, 'positive slider delta yields positive sliceVelocity');
+    assert.ok(feat.sliceSpeed > 0 && feat.sliceSpeed <= 1);
+    assert.equal(feat.vertexCount, geo.points.length);
+    assert.equal(feat.edgeCount, geo.edges.length);
+    assert.equal(feat.activeEdges, 12);
+    assert.equal(feat.activeVertices, 24);
+  }
+
+  const originPersp = projectionOrigin(5, 'perspective', 2.4);
+  assert.deepEqual(originPersp, [0, 0, 0, 2.4, 2.4]);
+  const originStereo = projectionOrigin(4, 'stereographic', 2.4);
+  assert.deepEqual(originStereo, [0, 0, 0, 1]);
+});
+
+test('SynesthesiaAudioEngine maps feature matrix to base pitch, 8 overtones, and low-pass filter sweep', async () => {
+  const e8 = e8Polytope();
+  const cube4 = hypercube(4);
+  const fCube = extractFeatureMatrix(cube4, cube4.points, { sliceEnabled: false });
+  const fE8 = extractFeatureMatrix(e8, e8.points, {
+    sliceEnabled: true,
+    sliceLevel: 0.1,
+    prevSliceLevel: -0.4,
+    dt: 1 / 60,
+    sliceSegments: 24,
+  });
+
+  const pitchCube = vertexCountToBaseFrequency(fCube.vertexCount, fCube.dim);
+  const pitchE8 = vertexCountToBaseFrequency(fE8.vertexCount, fE8.dim);
+  assert.ok(pitchE8 > pitchCube, 'higher vertex count and dimension map to higher fundamental pitch');
+
+  const voices = depthToVoiceHarmonics(fE8, pitchE8, 'e8_symphony');
+  assert.equal(voices.length, 8);
+  for (const v of voices) {
+    assert.ok(v.frequency >= 24 && v.frequency <= 14000);
+    assert.ok(v.gain > 0 && v.gain <= 0.45);
+  }
+
+  const filterIdle = sliceToFilterParams(fCube, 'default', false);
+  const filterSweep = sliceToFilterParams(fE8, 'calabi_yau', true);
+  assert.ok(filterSweep.q > filterIdle.q, 'active slicing velocity boosts filter resonance Q');
+
+  // Verify polyphonic Web Audio node graph with a lightweight mock AudioContext
+  const makeParam = (initial = 0) => ({
+    value: initial,
+    targets: [],
+    setTargetAtTime(val, t, tau) {
+      this.value = val;
+      this.targets.push({ val, t, tau });
+    },
+  });
+  class MockAudioContext {
+    constructor() {
+      this.currentTime = 1.0;
+      this.state = 'suspended';
+      this.destination = {};
+    }
+    async resume() {
+      this.state = 'running';
+    }
+    createBiquadFilter() {
+      return { type: 'lowpass', frequency: makeParam(1000), Q: makeParam(1), connect() {} };
+    }
+    createDynamicsCompressor() {
+      return {
+        threshold: makeParam(),
+        knee: makeParam(),
+        ratio: makeParam(),
+        attack: makeParam(),
+        release: makeParam(),
+        connect() {},
+      };
+    }
+    createAnalyser() {
+      return { fftSize: 256, smoothingTimeConstant: 0.8, connect() {} };
+    }
+    createGain() {
+      return { gain: makeParam(0), connect() {} };
+    }
+    createOscillator() {
+      return {
+        type: 'sine',
+        frequency: makeParam(110),
+        detune: makeParam(0),
+        connect() {},
+        start() {},
+      };
+    }
+  }
+
+  const engine = new SynesthesiaAudioEngine({ AudioContextClass: MockAudioContext });
+  await engine.playResonance({ preset: 'string_harmonics', dimension: 6 });
+  assert.equal(engine.enabled, true);
+  assert.equal(engine.preset, 'string_harmonics');
+  assert.equal(engine.dimension, 6);
+  assert.equal(engine.voices.length, 8);
+
+  const state = engine.updateFromFeatures(fE8, { sliceEnabled: true });
+  assert.equal(state.voiceFrequencies.length, 8);
+  assert.ok(engine.filterNode.frequency.targets.length > 0);
 });

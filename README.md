@@ -1,6 +1,6 @@
-# Calabi-Yau Lab (v0.7.0)
+# Calabi-Yau Lab (v0.8.0)
 
-**See what higher dimensions look like.** A desktop lab (Rust + Tauri, Three.js) for turning, slicing and projecting real objects from 2 to 11 dimensions, with field notes that explain what you are looking at and an optional AI guide you can ask about it.
+**See and hear what higher dimensions look like.** A desktop lab (Rust + Tauri, Three.js, Web Audio) for turning, slicing and projecting real objects from 2 to 11 dimensions, then playing those invariants as a polyphonic synthesizer. Field notes explain what you are looking at, and an optional AI guide can switch the view or play a resonance preset.
 
 Every object is generated from its definition and every number on screen is computed or checked by the test suite. Nothing is decorative.
 
@@ -23,11 +23,12 @@ Every object is generated from its definition and every number on screen is comp
 - **Cross-section**: an exact slice where the hidden coordinate equals your slider, like Flatland watching a sphere pass through. "Show only the slice" draws it on its own.
 - **Colour** encodes the hidden coordinate, so you can read depth in the extra dimension.
 - **Snapshot** saves a PNG (desktop: `~/Pictures/CalabiYauLab`).
+- **Synesthesia synth**: vertex count sets the fundamental pitch, hidden-axis depth sets eight overtones, and moving the slice slider sweeps a low-pass filter. Presets follow the manifold (E₈ symphony, Calabi-Yau sweep, Clifford torus loop, and others).
 - Each space has a link: `#hypercube-n`, `#600-cell`, `#e8`, …
 
 ## Ask about this
 
-The right panel can stream an answer from any provider in the catalog (Ollama Cloud, Ollama Local, Anthropic, OpenAI, Google, xAI, DeepSeek, OpenRouter, Groq and others). The model is told which object is on screen and its computed facts, and can reply with `SHOW: <id>` to switch the view. Keys are entered in the panel or read from the provider's usual environment variable (`OLLAMA_API_KEY`, `ANTHROPIC_API_KEY`, …).
+The right panel can stream an answer from any provider in the catalog (Ollama Cloud, Ollama Local, Anthropic, OpenAI, Google, xAI, DeepSeek, OpenRouter, Groq and others). The model is told which object is on screen, its computed facts, and the live synthesizer state. It can reply with `SHOW: <id>` to switch the view, or `PLAY_RESONANCE: { preset: 'string_harmonics', dimension: N }` to play a harmonic preset. Keys are entered in the panel or read from the provider's usual environment variable (`OLLAMA_API_KEY`, `ANTHROPIC_API_KEY`, …).
 
 ## Develop
 
@@ -41,11 +42,12 @@ cargo test --manifest-path src-tauri/Cargo.toml
 
 Code layout:
 
-- `src/lab/geometry.js`: N-D polytopes, surfaces, Hopf fibers, E₈ Coxeter plane, rotations, projections, slicing
+- `src/lab/geometry.js`: N-D polytopes, surfaces, Hopf fibers, E₈ Coxeter plane, rotations, projections, slicing, and the sonification feature matrix
 - `src/lab/catalog.js`: the spaces, their controls, notes and facts
 - `src/lab/viewer.js`: WebGL renderer
+- `src/lab/audio.js`: polyphonic Web Audio synthesizer
 - `src/lab/ask.js`: the Ask panel
-- `src-tauri/src`: model streaming, model listing, snapshot saving
+- `src-tauri/src`: model streaming, model listing, snapshot saving, and the 11D matrix/slice engine
 
 ## Releases
 
@@ -53,4 +55,4 @@ Pushing a `v*` tag builds installers for Windows (`.msi`, `.exe`), macOS (Apple 
 
 ## History
 
-Up to v0.6.2 this project also contained an app builder, a guarded command runner and a token "spectral instrument". Those were removed in v0.7.0 to refocus on geometry and discovery.
+Up to v0.6.2 this project also contained an app builder, a guarded command runner and a token "spectral instrument". Those were removed in v0.7.0 to refocus on geometry and discovery. v0.8.0 adds the Synesthesia Engine: geometric features drive audio, and Rust can take over N-dimensional frame math when the viewer drops below 60 fps.

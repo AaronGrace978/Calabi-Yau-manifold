@@ -1,6 +1,6 @@
 [package]
 name = "calabi-yau-lab"
-version = "0.7.0"
+version = "0.8.0"
 description = "Calabi-Yau Lab: see what higher dimensions look like"
 authors = ["Aaron Grace"]
 license = "MIT"
